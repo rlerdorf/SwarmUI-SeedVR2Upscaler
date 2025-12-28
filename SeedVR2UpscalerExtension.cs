@@ -97,7 +97,11 @@ public class SeedVR2UpscalerExtension : Extension
         ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-preset-max///SeedVR2: Max Quality (7B Sharp FP16)");
 
         // Create parameter group for advanced settings
-        SeedVR2Group = new("SeedVR2 Upscaler", Toggles: false, Open: false, IsAdvanced: true);
+        SeedVR2Group = new("SeedVR2 Upscaler", Toggles: false, Open: false, IsAdvanced: true,
+            Description: "Advanced settings for the SeedVR2 AI upscaler.\n" +
+            "To USE SeedVR2: Go to Refine/Upscale group, set 'Refiner Upscale' to your desired scale (e.g. 1.25x), then select a SeedVR2 option from 'Refiner Upscale Method'.\n" +
+            "The quality presets (Fast, Balanced, Quality, Max) auto-configure optimal settings for your VRAM.\n" +
+            "You only need to adjust settings here if you want to override preset defaults (e.g. force different block swap, enable tiled VAE, or change color correction).");
 
         // Register advanced parameters
         SeedVR2Resolution = T2IParamTypes.Register<int>(new(
@@ -122,9 +126,9 @@ public class SeedVR2UpscalerExtension : Extension
 
         SeedVR2ColorCorrection = T2IParamTypes.Register<string>(new(
             "SeedVR2 Color Correction",
-            "Color correction method for SeedVR2 upscaling.\nLAB is recommended for most use cases.",
-            "lab",
-            GetValues: _ => ["lab", "wavelet", "wavelet_adaptive", "hsv", "adain", "none"],
+            "Color correction method for SeedVR2 upscaling.\nNone uses SeedVR2's native output. Other options adjust colors to match the original image.",
+            "none",
+            GetValues: _ => ["none", "lab", "wavelet", "wavelet_adaptive", "hsv", "adain"],
             Toggleable: true, IsAdvanced: true,
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
@@ -348,7 +352,7 @@ public class SeedVR2UpscalerExtension : Extension
         int resolution = g.UserInput.TryGet(SeedVR2Resolution, out int userResolution) ? userResolution : calculatedResolution;
 
         // Get other optional parameters
-        string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "lab");
+        string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
         bool twoStepMode = g.UserInput.Get(SeedVR2TwoStepMode, false);
         double preDownscale = g.UserInput.Get(SeedVR2PreDownscale, 0.5);
         int maxResolution = g.UserInput.Get(SeedVR2MaxResolution, 4096);
