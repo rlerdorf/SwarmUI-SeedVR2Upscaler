@@ -4,6 +4,7 @@ Integrates [SeedVR2](https://github.com/rhymes-ai/SeedVR2) AI upscaler into Swar
 
 ## Features
 
+- **One-Click Install**: Install the SeedVR2 ComfyUI node directly from SwarmUI
 - **Auto VRAM Detection**: Automatically selects the best model based on your GPU's available VRAM
 - **Quality Presets**: Fast, Balanced, Quality, and Max Quality options
 - **2-Step Upscaling**: Downscales image before upscaling to reduce artifacts (enabled by default)
@@ -13,7 +14,7 @@ Integrates [SeedVR2](https://github.com/rhymes-ai/SeedVR2) AI upscaler into Swar
 
 ## Requirements
 
-1. **SeedVR2 ComfyUI Node**: Install [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/SeedVR2/ComfyUI-SeedVR2_VideoUpscaler) in your ComfyUI custom_nodes folder
+1. **SeedVR2 ComfyUI Node**: [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) - can be installed with one click from the SeedVR2 Upscaler parameter group in SwarmUI
 2. **KJNodes** (recommended): Install [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) for automatic VRAM cleanup before upscaling
 
 ## Installation

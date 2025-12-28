@@ -83,6 +83,12 @@ public class SeedVR2UpscalerExtension : Extension
         // Register KJNodes feature for VRAM cleanup support
         ComfyUIBackendExtension.NodeToFeatureMap["VRAM_Debug"] = "kjnodes";
 
+        // Register installable feature for the SeedVR2 ComfyUI node
+        InstallableFeatures.RegisterInstallableFeature(new("SeedVR2 Video Upscaler", "seedvr2_upscaler", "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler", "numz", "This will install the SeedVR2 Video Upscaler ComfyUI node by numz.\nDo you wish to install?"));
+
+        // Add the JS file for the install button
+        ScriptFiles.Add("assets/seedvr2_install.js");
+
         // Add SeedVR2 to upscaler models list
         ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-auto///SeedVR2: Auto (VRAM-based)");
         ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-preset-fast///SeedVR2: Fast (3B Q4)");
