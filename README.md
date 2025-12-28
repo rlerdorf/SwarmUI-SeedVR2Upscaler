@@ -111,5 +111,5 @@ MIT License
 
 ## Credits
 
-- [SeedVR2](https://github.com/rhymes-ai/SeedVR2) by Rhymes AI
+- [SeedVR2](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) by NumZ
 - [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) by mcmonkey
