@@ -209,8 +209,8 @@ public class SeedVR2UpscalerExtension : Extension
         // Add workflow generation steps
         // - Image jobs: run before image save step (10) so the saved image is the SeedVR2 output
         // - Video jobs: run after video generation steps so we can retarget SwarmSaveAnimationWS to the SeedVR2 output
-        WorkflowGenerator.AddStep(GenerateSeedVR2WorkflowImage, 9.9);
-        WorkflowGenerator.AddStep(GenerateSeedVR2WorkflowVideo, 12.9);
+        WorkflowGenerator.AddStep(g => GenerateSeedVR2Workflow(g, isVideoPass: false), 9.9);
+        WorkflowGenerator.AddStep(g => GenerateSeedVR2Workflow(g, isVideoPass: true), 12.9);
 
         Logs.Info("SeedVR2 Upscaler Extension loaded successfully.");
     }
@@ -483,52 +483,17 @@ public class SeedVR2UpscalerExtension : Extension
         g.FinalImageOut = new JArray() { upscalerNode, 0 };
     }
 
-    /// <summary>Runs SeedVR2 for image workflows.</summary>
-    public static void GenerateSeedVR2WorkflowImage(WorkflowGenerator g)
+    static void GenerateSeedVR2Workflow(WorkflowGenerator g, bool isVideoPass)
     {
-        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice) || IsVideoWorkflow(g))
+        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice))
+        {
+            return;
+        }
+        if (IsVideoWorkflow(g) != isVideoPass || g.FinalImageOut is null)
         {
             return;
         }
         ApplySeedVR2(g, modelChoice);
-    }
-
-    /// <summary>Runs SeedVR2 for video workflows.</summary>
-    public static void GenerateSeedVR2WorkflowVideo(WorkflowGenerator g)
-    {
-        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice) || !IsVideoWorkflow(g))
-        {
-            return;
-        }
-        if (g.FinalImageOut is null)
-        {
-            return;
-        }
-        JArray priorOut = g.FinalImageOut;
-        ApplySeedVR2(g, modelChoice);
-        // The video save node(s) are created during the built-in Image-To-Video / Extend-Video steps.
-        // We locate the last SwarmSaveAnimationWS node that saved the "priorOut" and rewrite it to save the SeedVR2 output.
-        JObject lastMatchInputs = null;
-        foreach ((string _, JToken nodeTok) in g.Workflow)
-        {
-            if (nodeTok is not JObject nodeObj || $"{nodeObj["class_type"]}" != "SwarmSaveAnimationWS")
-            {
-                continue;
-            }
-            JObject inputs = nodeObj["inputs"] as JObject;
-            if (inputs is null)
-            {
-                continue;
-            }
-            if (inputs.TryGetValue("images", out JToken imagesTok) && JToken.DeepEquals(imagesTok, priorOut))
-            {
-                lastMatchInputs = inputs;
-            }
-        }
-        if (lastMatchInputs is not null)
-        {
-            lastMatchInputs["images"] = g.FinalImageOut;
-        }
     }
 
     static bool IsVideoWorkflow(WorkflowGenerator g)
