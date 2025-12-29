@@ -1,6 +1,6 @@
 # SwarmUI SeedVR2 Upscaler Extension
 
-Integrates [SeedVR2](https://github.com/rhymes-ai/SeedVR2) AI upscaler into SwarmUI's Refiner Upscale Method dropdown, with automatic VRAM detection, quality presets, and 2-step upscaling for reduced artifacts.
+Adds an optional [SeedVR2](https://github.com/rhymes-ai/SeedVR2) AI upscaler pass to SwarmUI as a post-processing step appended to the end of a normal workflow (right after the final VAE Decode), with automatic VRAM detection, quality presets, and 2-step upscaling for reduced artifacts.
 
 ## Features
 
@@ -42,14 +42,17 @@ dotnet build src/SwarmUI.csproj --configuration Release -o ./src/bin/live_releas
 
 ## Usage
 
-1. In the **Generate** tab, expand the **Refiner** section
-2. Set **Refiner Upscale** to your desired upscale factor (e.g., 1.25x)
-3. Set **Refiner Upscale Method** to one of the SeedVR2 options:
+1. In the **Generate** tab, expand the **SeedVR2 Upscaler** group
+2. Toggle the group **on**
+3. Choose a **SeedVR2 Model**:
    - **Auto (VRAM-based)**: Detects GPU VRAM and picks optimal settings
    - **Fast (3B Q4)**: Fastest, lowest VRAM (~8GB)
    - **Balanced (3B FP8)**: Good balance of speed and quality (~12GB)
    - **Quality (7B FP8)**: High quality (~20GB)
    - **Max Quality (7B Sharp FP16)**: Best quality (~24GB+)
+4. (Optional) Set **SeedVR2 Upscale By**:
+   - `1.0` = keep size (detail enhancement)
+   - slider UI goes up to `4.0`, but you can type a higher value
 
 ## Presets
 
@@ -66,13 +69,11 @@ Found under the **SeedVR2 Upscaler** group in advanced settings:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| **SeedVR2 Resolution** | Override target resolution (shortest edge) | Auto-calculated |
 | **SeedVR2 Block Swap** | Transformer blocks to offload to CPU (0-36) | Preset-based |
 | **SeedVR2 Color Correction** | Color correction method (lab, wavelet, hsv, adain, none) | lab |
 | **SeedVR2 2-Step Mode** | Downscale before upscaling to reduce artifacts | Enabled |
 | **SeedVR2 Pre-Downscale** | Downscale factor for 2-step mode (0.25-0.9) | 0.5 |
 | **SeedVR2 Tiled VAE** | Process in tiles to reduce VRAM | Preset-based |
-| **SeedVR2 Max Resolution** | Cap maximum output resolution | 4096 |
 | **SeedVR2 Latent Noise** | Add noise in latent space for detail variation | 0.0 |
 | **SeedVR2 Cache Model** | Keep models loaded between generations | Disabled |
 
