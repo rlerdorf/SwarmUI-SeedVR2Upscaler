@@ -72,7 +72,7 @@ Found under the **SeedVR2 Upscaler** group in advanced settings:
 | **SeedVR2 2-Step Mode** | Downscale before upscaling to reduce artifacts | Enabled |
 | **SeedVR2 Pre-Downscale** | Downscale factor for 2-step mode (0.25-0.9) | 0.5 |
 | **SeedVR2 Tiled VAE** | Process in tiles to reduce VRAM | Preset-based |
-| **SeedVR2 Max Resolution** | Cap maximum output resolution | 20480 |
+| **SeedVR2 Max Resolution** | Cap maximum output resolution | 4096 |
 | **SeedVR2 Latent Noise** | Add noise in latent space for detail variation | 0.0 |
 | **SeedVR2 Cache Model** | Keep models loaded between generations | Disabled |
 
