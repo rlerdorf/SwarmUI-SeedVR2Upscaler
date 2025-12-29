@@ -17,6 +17,9 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Registered parameter for SeedVR2 upscale factor (applied after the normal workflow output).</summary>
     public static T2IRegisteredParam<double> SeedVR2UpscaleBy;
 
+    /// <summary>Registered parameter for SeedVR2 batch size.</summary>
+    public static T2IRegisteredParam<int> SeedVR2BatchSize;
+
     /// <summary>Registered parameter for SeedVR2 block swap count.</summary>
     public static T2IRegisteredParam<int> SeedVR2BlockSwap;
 
@@ -121,6 +124,17 @@ public class SeedVR2UpscalerExtension : Extension
             OrderPriority: 1
         ));
 
+        SeedVR2BatchSize = T2IParamTypes.Register<int>(new(
+            "SeedVR2 Batch Size",
+            "Batch size for SeedVR2 video processing.\nHigher values can increase throughput but use more VRAM.\nSlider is 1 to 16.",
+            "1",
+            IgnoreIf: "1",
+            Min: 1, Max: 16, ViewMax: 16, Step: 1,
+            ViewType: ParamViewType.SLIDER,
+            Group: SeedVR2Group,
+            OrderPriority: 2
+        ));
+
         SeedVR2BlockSwap = T2IParamTypes.Register<int>(new(
             "SeedVR2 Block Swap",
             "Number of transformer blocks to swap to CPU for VRAM optimization.\n0 = disabled, higher = more VRAM savings but slower.\n3B model max: 32, 7B model max: 36.\nNote: Presets auto-configure this value.",
@@ -192,10 +206,11 @@ public class SeedVR2UpscalerExtension : Extension
             OrderPriority: 10
         ));
 
-        // Add workflow generation step
-        // Priority 6: After VAEDecode (1) and Segmentation/FaceRefine (5), before SaveImage (10)
-        // This ensures face refinement happens at original resolution, then SeedVR2 upscales the result
-        WorkflowGenerator.AddStep(GenerateSeedVR2Workflow, 6);
+        // Add workflow generation steps
+        // - Image jobs: run before image save step (10) so the saved image is the SeedVR2 output
+        // - Video jobs: run after video generation steps so we can retarget SwarmSaveAnimationWS to the SeedVR2 output
+        WorkflowGenerator.AddStep(GenerateSeedVR2WorkflowImage, 9.9);
+        WorkflowGenerator.AddStep(GenerateSeedVR2WorkflowVideo, 12.9);
 
         Logs.Info("SeedVR2 Upscaler Extension loaded successfully.");
     }
@@ -265,15 +280,8 @@ public class SeedVR2UpscalerExtension : Extension
         }
     }
 
-    /// <summary>Generates the SeedVR2 workflow nodes when SeedVR2 upscaler is selected.</summary>
-    public static void GenerateSeedVR2Workflow(WorkflowGenerator g)
+    static void ApplySeedVR2(WorkflowGenerator g, string modelChoice)
     {
-        // Only activate if the group toggle is enabled
-        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice))
-        {
-            return;
-        }
-
         // Verify feature is available
         if (!g.Features.Contains("seedvr2_upscaler"))
         {
@@ -335,11 +343,22 @@ public class SeedVR2UpscalerExtension : Extension
             Logs.Warning($"SeedVR2: Unknown model key '{modelKey}', falling back to 3B FP8");
         }
 
-        // Calculate target resolution based on upscale factor
-        double upscaleFactor = g.UserInput.Get(T2IParamTypes.RefinerUpscale, 1.0);
+        // Calculate target resolution.
+        // For normal image workflows, base size is the image output size (including RefinerUpscale).
+        // For video workflows with VideoModel, base size must match the actual video frame dimensions SwarmUI generates.
         double seedvrUpscaleBy = g.UserInput.Get(SeedVR2UpscaleBy, 1.0);
-        int baseWidth = (int)Math.Round(g.UserInput.GetImageWidth() * upscaleFactor);
-        int baseHeight = (int)Math.Round(g.UserInput.GetImageHeight() * upscaleFactor);
+        int baseWidth, baseHeight;
+        if (IsVideoWorkflow(g) && TryGetVideoFrameBaseDims(g, out int vidW, out int vidH))
+        {
+            baseWidth = vidW;
+            baseHeight = vidH;
+        }
+        else
+        {
+            double upscaleFactor = g.UserInput.Get(T2IParamTypes.RefinerUpscale, 1.0);
+            baseWidth = (int)Math.Round(g.UserInput.GetImageWidth() * upscaleFactor);
+            baseHeight = (int)Math.Round(g.UserInput.GetImageHeight() * upscaleFactor);
+        }
         int targetWidth = (int)Math.Round(baseWidth * seedvrUpscaleBy);
         int targetHeight = (int)Math.Round(baseHeight * seedvrUpscaleBy);
         // SeedVR2 uses the shortest edge as the resolution target
@@ -351,6 +370,12 @@ public class SeedVR2UpscalerExtension : Extension
         double preDownscale = g.UserInput.Get(SeedVR2PreDownscale, 0.5);
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+        int batchSize = g.UserInput.Get(SeedVR2BatchSize, 1);
+
+        if (!IsVideoWorkflow(g))
+        {
+            batchSize = 1;
+        }
 
         // Determine if using 3B or 7B model and cap block swap accordingly
         bool is7BModel = modelKey.Contains("-7b-");
@@ -362,7 +387,7 @@ public class SeedVR2UpscalerExtension : Extension
         }
 
         string modeInfo = twoStepMode ? $" [2-Step: downscale {preDownscale}x first]" : "";
-        string configInfo = $"model={ditModel}, upscale={seedvrUpscaleBy:0.###}, blockSwap={blockSwap}, tiledVAE={tiledVAE}";
+        string configInfo = $"model={ditModel}, upscale={seedvrUpscaleBy:0.###}, batch={batchSize}, blockSwap={blockSwap}, tiledVAE={tiledVAE}";
         Logs.Info($"SeedVR2: Upscaling {baseWidth}x{baseHeight} -> resolution={resolution}{modeInfo} ({configInfo})");
 
         // Determine offload device based on blockswap setting
@@ -441,7 +466,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["seed"] = seed,
             ["resolution"] = resolution,
             ["max_resolution"] = resolution,
-            ["batch_size"] = 1,  // Use 1 for single images
+            ["batch_size"] = batchSize,
             ["uniform_batch_size"] = false,
             ["temporal_overlap"] = 0,
             ["prepend_frames"] = 0,
@@ -456,5 +481,114 @@ public class SeedVR2UpscalerExtension : Extension
 
         // Update final image output to point to upscaler output
         g.FinalImageOut = new JArray() { upscalerNode, 0 };
+    }
+
+    /// <summary>Runs SeedVR2 for image workflows.</summary>
+    public static void GenerateSeedVR2WorkflowImage(WorkflowGenerator g)
+    {
+        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice) || IsVideoWorkflow(g))
+        {
+            return;
+        }
+        ApplySeedVR2(g, modelChoice);
+    }
+
+    /// <summary>Runs SeedVR2 for video workflows.</summary>
+    public static void GenerateSeedVR2WorkflowVideo(WorkflowGenerator g)
+    {
+        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice) || !IsVideoWorkflow(g))
+        {
+            return;
+        }
+        if (g.FinalImageOut is null)
+        {
+            return;
+        }
+        JArray priorOut = g.FinalImageOut;
+        ApplySeedVR2(g, modelChoice);
+        // The video save node(s) are created during the built-in Image-To-Video / Extend-Video steps.
+        // We locate the last SwarmSaveAnimationWS node that saved the "priorOut" and rewrite it to save the SeedVR2 output.
+        JObject lastMatchInputs = null;
+        foreach ((string _, JToken nodeTok) in g.Workflow)
+        {
+            if (nodeTok is not JObject nodeObj || $"{nodeObj["class_type"]}" != "SwarmSaveAnimationWS")
+            {
+                continue;
+            }
+            JObject inputs = nodeObj["inputs"] as JObject;
+            if (inputs is null)
+            {
+                continue;
+            }
+            if (inputs.TryGetValue("images", out JToken imagesTok) && JToken.DeepEquals(imagesTok, priorOut))
+            {
+                lastMatchInputs = inputs;
+            }
+        }
+        if (lastMatchInputs is not null)
+        {
+            lastMatchInputs["images"] = g.FinalImageOut;
+        }
+    }
+
+    static bool IsVideoWorkflow(WorkflowGenerator g)
+    {
+        return g.UserInput.TryGet(T2IParamTypes.VideoModel, out _)
+            || g.UserInput.Get(T2IParamTypes.Prompt, "").Contains("<extend:");
+    }
+
+    /// <summary>
+    /// For VideoModel workflows, matches SwarmUI's Image-To-Video dimension selection logic to determine the actual frame resolution.
+    /// Returns false when there is no VideoModel (eg extend-only flows), in which case the caller should fall back to image-size logic.
+    /// </summary>
+    /// <remarks>
+    /// This is intentionally mirrored from SwarmUI core:
+    /// `src/BuiltinExtensions/ComfyUIBackend/WorkflowGeneratorSteps.cs` in the `#region Image To Video` step (priority 11),
+    /// where SwarmUI computes the target `width`/`height` for video frame generation based on `VideoResolution`, model defaults,
+    /// and special-case logic (eg hunyuan-video precision and the 1344x768 -> 1024x576 case).
+    /// </remarks>
+    static bool TryGetVideoFrameBaseDims(WorkflowGenerator g, out int width, out int height)
+    {
+        width = 0;
+        height = 0;
+        if (!g.UserInput.TryGet(T2IParamTypes.VideoModel, out T2IModel vidModel) || vidModel is null)
+        {
+            return false;
+        }
+        int w = vidModel.StandardWidth <= 0 ? 1024 : vidModel.StandardWidth;
+        int h = vidModel.StandardHeight <= 0 ? 576 : vidModel.StandardHeight;
+        int imageWidth = g.UserInput.GetImageWidth();
+        int imageHeight = g.UserInput.GetImageHeight();
+        string resFormat = g.UserInput.Get(T2IParamTypes.VideoResolution, "Model Preferred");
+        int resPrecision = 64;
+        if (vidModel.ModelClass?.CompatClass?.ID == "hunyuan-video")
+        {
+            resPrecision = 16;
+        }
+        if (resFormat == "Image Aspect, Model Res")
+        {
+            if (w == 1024 && h == 576 && imageWidth == 1344 && imageHeight == 768)
+            {
+                w = 1024;
+                h = 576;
+            }
+            else
+            {
+                (w, h) = Utilities.ResToModelFit(imageWidth, imageHeight, w * h, resPrecision);
+            }
+        }
+        else if (resFormat == "Image")
+        {
+            w = imageWidth;
+            h = imageHeight;
+            if (g.UserInput.TryGet(T2IParamTypes.RefinerUpscale, out double scale))
+            {
+                w = (int)Math.Round(w * scale);
+                h = (int)Math.Round(h * scale);
+            }
+        }
+        width = w;
+        height = h;
+        return true;
     }
 }

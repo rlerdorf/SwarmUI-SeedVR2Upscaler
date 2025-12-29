@@ -53,6 +53,7 @@ dotnet build src/SwarmUI.csproj --configuration Release -o ./src/bin/live_releas
 4. (Optional) Set **SeedVR2 Upscale By**:
    - `1.0` = keep size (detail enhancement)
    - slider UI goes up to `4.0`, but you can type a higher value
+5. (Optional) Set **SeedVR2 Batch Size** for videos (1 to 16)
 
 ## Presets
 
