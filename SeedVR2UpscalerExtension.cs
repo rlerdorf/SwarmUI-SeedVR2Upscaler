@@ -107,7 +107,7 @@ public class SeedVR2UpscalerExtension : Extension
         SeedVR2Resolution = T2IParamTypes.Register<int>(new(
             "SeedVR2 Resolution",
             "Target resolution for shortest edge when using SeedVR2 upscaler.\nDefaults to calculated value from upscale factor if not set.",
-            "1080", Min: 256, Max: 4096, Step: 8,
+            "1080", Min: 256, Max: 20480, Step: 8,
             Toggleable: true, IsAdvanced: true,
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
@@ -168,7 +168,7 @@ public class SeedVR2UpscalerExtension : Extension
         SeedVR2MaxResolution = T2IParamTypes.Register<int>(new(
             "SeedVR2 Max Resolution",
             "Maximum allowed output resolution (shortest edge).\nCaps the upscaled image size to prevent runaway resolution.",
-            "4096", Min: 1024, Max: 8192, Step: 256,
+            "20480", Min: 1024, Max: 20480, Step: 256,
             Toggleable: true, IsAdvanced: true,
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
