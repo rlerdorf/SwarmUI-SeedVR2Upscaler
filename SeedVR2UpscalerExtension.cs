@@ -168,7 +168,7 @@ public class SeedVR2UpscalerExtension : Extension
         SeedVR2MaxResolution = T2IParamTypes.Register<int>(new(
             "SeedVR2 Max Resolution",
             "Maximum allowed output resolution (shortest edge).\nCaps the upscaled image size to prevent runaway resolution.",
-            "20480", Min: 1024, Max: 20480, Step: 256,
+            "4096", Min: 1024, Max: 20480, Step: 256,
             Toggleable: true, IsAdvanced: true,
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
