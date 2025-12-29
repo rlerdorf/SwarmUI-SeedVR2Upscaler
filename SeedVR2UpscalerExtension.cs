@@ -11,8 +11,11 @@ namespace SeedVR2Upscaler;
 /// <summary>Extension for SeedVR2 video/image upscaling integration.</summary>
 public class SeedVR2UpscalerExtension : Extension
 {
-    /// <summary>Registered parameter for SeedVR2 target resolution.</summary>
-    public static T2IRegisteredParam<int> SeedVR2Resolution;
+    /// <summary>Registered parameter for SeedVR2 model / preset selection.</summary>
+    public static T2IRegisteredParam<string> SeedVR2Model;
+
+    /// <summary>Registered parameter for SeedVR2 upscale factor (applied after the normal workflow output).</summary>
+    public static T2IRegisteredParam<double> SeedVR2UpscaleBy;
 
     /// <summary>Registered parameter for SeedVR2 block swap count.</summary>
     public static T2IRegisteredParam<int> SeedVR2BlockSwap;
@@ -29,16 +32,13 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Registered parameter for SeedVR2 tiled VAE mode.</summary>
     public static T2IRegisteredParam<bool> SeedVR2TiledVAE;
 
-    /// <summary>Registered parameter for SeedVR2 max resolution cap.</summary>
-    public static T2IRegisteredParam<int> SeedVR2MaxResolution;
-
     /// <summary>Registered parameter for SeedVR2 latent noise scale.</summary>
     public static T2IRegisteredParam<double> SeedVR2LatentNoiseScale;
 
     /// <summary>Registered parameter for SeedVR2 model caching.</summary>
     public static T2IRegisteredParam<bool> SeedVR2CacheModel;
 
-    /// <summary>Parameter group for SeedVR2 advanced settings.</summary>
+    /// <summary>Parameter group for SeedVR2 settings.</summary>
     public static T2IParamGroup SeedVR2Group;
 
     /// <summary>Model filename mapping from UI selection to actual model files.</summary>
@@ -89,27 +89,34 @@ public class SeedVR2UpscalerExtension : Extension
         // Add the JS file for the install button
         ScriptFiles.Add("assets/seedvr2_install.js");
 
-        // Add SeedVR2 to upscaler models list
-        ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-auto///SeedVR2: Auto (VRAM-based)");
-        ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-preset-fast///SeedVR2: Fast (3B Q4)");
-        ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-preset-balanced///SeedVR2: Balanced (3B FP8)");
-        ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-preset-quality///SeedVR2: Quality (7B FP8)");
-        ComfyUIBackendExtension.UpscalerModels.Add("seedvr2-preset-max///SeedVR2: Max Quality (7B Sharp FP16)");
+        SeedVR2Group = new("SeedVR2 Upscaler", Toggles: true, Open: false, IsAdvanced: false,
+            Description: "Settings for the SeedVR2 AI upscaler.\n" +
+            "This runs AFTER your normal workflow completes (including any Refine/Upscale high-res fix).");
 
-        // Create parameter group for advanced settings
-        SeedVR2Group = new("SeedVR2 Upscaler", Toggles: false, Open: false, IsAdvanced: true,
-            Description: "Advanced settings for the SeedVR2 AI upscaler.\n" +
-            "To USE SeedVR2: Go to Refine/Upscale group, set 'Refiner Upscale' to your desired scale (e.g. 1.25x), then select a SeedVR2 option from 'Refiner Upscale Method'.\n" +
-            "The quality presets (Fast, Balanced, Quality, Max) auto-configure optimal settings for your VRAM.\n" +
-            "You only need to adjust settings here if you want to override preset defaults (e.g. force different block swap, enable tiled VAE, or change color correction).");
+        SeedVR2Model = T2IParamTypes.Register<string>(new(
+            "SeedVR2 Model",
+            "Which SeedVR2 model/preset to use.\nPresets auto-configure optimal settings based on typical VRAM constraints.\nAuto will detect VRAM and select a configuration.",
+            "seedvr2-auto",
+            GetValues: _ => [
+                "seedvr2-auto///Auto (VRAM-based)",
+                "seedvr2-preset-fast///Fast (3B Q4)",
+                "seedvr2-preset-balanced///Balanced (3B FP8)",
+                "seedvr2-preset-quality///Quality (7B FP8)",
+                "seedvr2-preset-max///Max Quality (7B Sharp FP16)"
+            ],
+            Group: SeedVR2Group,
+            OrderPriority: 0
+        ));
 
-        // Register advanced parameters
-        SeedVR2Resolution = T2IParamTypes.Register<int>(new(
-            "SeedVR2 Resolution",
-            "Target resolution for shortest edge when using SeedVR2 upscaler.\nDefaults to calculated value from upscale factor if not set.",
-            "1080", Min: 256, Max: 4096, Step: 8,
-            Toggleable: true, IsAdvanced: true,
-            FeatureFlag: "seedvr2_upscaler",
+        SeedVR2UpscaleBy = T2IParamTypes.Register<double>(new(
+            "SeedVR2 Upscale By",
+            "How much to upscale the final decoded image by before/while running SeedVR2.\n" +
+            "1.0 keeps the same size (detail enhancement pass).\n" +
+            "The slider UI is capped at 4.0, but you can type a higher value if desired.",
+            "1",
+            IgnoreIf: "1",
+            Min: 1, Max: 16, ViewMax: 4, Step: 0.25,
+            ViewType: ParamViewType.SLIDER,
             Group: SeedVR2Group,
             OrderPriority: 1
         ));
@@ -163,16 +170,6 @@ public class SeedVR2UpscalerExtension : Extension
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
             OrderPriority: 6
-        ));
-
-        SeedVR2MaxResolution = T2IParamTypes.Register<int>(new(
-            "SeedVR2 Max Resolution",
-            "Maximum allowed output resolution (shortest edge).\nCaps the upscaled image size to prevent runaway resolution.",
-            "4096", Min: 1024, Max: 8192, Step: 256,
-            Toggleable: true, IsAdvanced: true,
-            FeatureFlag: "seedvr2_upscaler",
-            Group: SeedVR2Group,
-            OrderPriority: 7
         ));
 
         SeedVR2LatentNoiseScale = T2IParamTypes.Register<double>(new(
@@ -271,9 +268,8 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Generates the SeedVR2 workflow nodes when SeedVR2 upscaler is selected.</summary>
     public static void GenerateSeedVR2Workflow(WorkflowGenerator g)
     {
-        // Only activate if using SeedVR2 upscale method
-        string upscaleMethod = g.UserInput.Get(ComfyUIBackendExtension.RefinerUpscaleMethod, "");
-        if (!upscaleMethod.StartsWith("seedvr2-"))
+        // Only activate if the group toggle is enabled
+        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice))
         {
             return;
         }
@@ -291,7 +287,7 @@ public class SeedVR2UpscalerExtension : Extension
         }
 
         // Determine model variant and settings from selection
-        string modelKey = upscaleMethod.Before("///");
+        string modelKey = modelChoice.Before("///");
         int blockSwap;
         bool tiledVAE;
         bool isPresetOrAuto = false;
@@ -341,21 +337,18 @@ public class SeedVR2UpscalerExtension : Extension
 
         // Calculate target resolution based on upscale factor
         double upscaleFactor = g.UserInput.Get(T2IParamTypes.RefinerUpscale, 1.0);
-        int baseWidth = g.UserInput.GetImageWidth();
-        int baseHeight = g.UserInput.GetImageHeight();
-        int targetWidth = (int)Math.Round(baseWidth * upscaleFactor);
-        int targetHeight = (int)Math.Round(baseHeight * upscaleFactor);
-        // SeedVR2 uses shortest edge as the resolution target
-        int calculatedResolution = Math.Min(targetWidth, targetHeight);
-
-        // Allow user override of resolution, otherwise use calculated
-        int resolution = g.UserInput.TryGet(SeedVR2Resolution, out int userResolution) ? userResolution : calculatedResolution;
+        double seedvrUpscaleBy = g.UserInput.Get(SeedVR2UpscaleBy, 1.0);
+        int baseWidth = (int)Math.Round(g.UserInput.GetImageWidth() * upscaleFactor);
+        int baseHeight = (int)Math.Round(g.UserInput.GetImageHeight() * upscaleFactor);
+        int targetWidth = (int)Math.Round(baseWidth * seedvrUpscaleBy);
+        int targetHeight = (int)Math.Round(baseHeight * seedvrUpscaleBy);
+        // SeedVR2 uses the shortest edge as the resolution target
+        int resolution = Math.Min(targetWidth, targetHeight);
 
         // Get other optional parameters
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
         bool twoStepMode = g.UserInput.Get(SeedVR2TwoStepMode, false);
         double preDownscale = g.UserInput.Get(SeedVR2PreDownscale, 0.5);
-        int maxResolution = g.UserInput.Get(SeedVR2MaxResolution, 4096);
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
 
@@ -369,7 +362,7 @@ public class SeedVR2UpscalerExtension : Extension
         }
 
         string modeInfo = twoStepMode ? $" [2-Step: downscale {preDownscale}x first]" : "";
-        string configInfo = $"model={ditModel}, blockSwap={blockSwap}, tiledVAE={tiledVAE}";
+        string configInfo = $"model={ditModel}, upscale={seedvrUpscaleBy:0.###}, blockSwap={blockSwap}, tiledVAE={tiledVAE}";
         Logs.Info($"SeedVR2: Upscaling {baseWidth}x{baseHeight} -> resolution={resolution}{modeInfo} ({configInfo})");
 
         // Determine offload device based on blockswap setting
@@ -447,7 +440,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["vae"] = new JArray() { vaeLoaderNode, 0 },
             ["seed"] = seed,
             ["resolution"] = resolution,
-            ["max_resolution"] = maxResolution,
+            ["max_resolution"] = resolution,
             ["batch_size"] = 1,  // Use 1 for single images
             ["uniform_batch_size"] = false,
             ["temporal_overlap"] = 0,
