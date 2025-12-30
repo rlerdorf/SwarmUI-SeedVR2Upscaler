@@ -36,6 +36,9 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Registered parameter for SeedVR2 latent noise scale.</summary>
     public static T2IRegisteredParam<double> SeedVR2LatentNoiseScale;
 
+    /// <summary>Registered parameter for SeedVR2 input noise scale.</summary>
+    public static T2IRegisteredParam<double> SeedVR2InputNoiseScale;
+
     /// <summary>Registered parameter for SeedVR2 model caching.</summary>
     public static T2IRegisteredParam<bool> SeedVR2CacheModel;
 
@@ -119,14 +122,31 @@ public class SeedVR2UpscalerExtension : Extension
 
         SeedVR2Model = T2IParamTypes.Register<string>(new(
             "SeedVR2 Model",
-            "Which SeedVR2 model/preset to use.\nPresets auto-configure optimal settings based on typical VRAM constraints.\nAuto will detect VRAM and select a configuration.",
+            "Which SeedVR2 model to use.\n" +
+            "Presets auto-configure Block Swap and Tiled VAE for typical VRAM constraints.\n" +
+            "Auto detects your GPU VRAM and selects an appropriate configuration.\n" +
+            "Individual models let you choose exactly which model file to use.",
             "seedvr2-auto",
             GetValues: _ => [
+                // Presets (auto-configure settings)
                 "seedvr2-auto///Auto (VRAM-based)",
-                "seedvr2-preset-fast///Fast (3B Q4)",
-                "seedvr2-preset-balanced///Balanced (3B FP8)",
-                "seedvr2-preset-quality///Quality (7B FP8)",
-                "seedvr2-preset-max///Max Quality (7B Sharp FP16)"
+                "seedvr2-preset-fast///Preset: Fast (3B Q4)",
+                "seedvr2-preset-balanced///Preset: Balanced (3B FP8)",
+                "seedvr2-preset-quality///Preset: Quality (7B FP8)",
+                "seedvr2-preset-max///Preset: Max Quality (7B Sharp FP16)",
+                // 3B Models - Faster, lower VRAM
+                "seedvr2-3b-fp16///3B FP16 (Best quality, ~16GB)",
+                "seedvr2-3b-fp8///3B FP8 (Good quality, ~12GB)",
+                "seedvr2-3b-q8///3B GGUF Q8 (Good quality, ~10GB)",
+                "seedvr2-3b-q4///3B GGUF Q4 (Acceptable quality, ~8GB)",
+                // 7B Models - Higher quality, higher VRAM
+                "seedvr2-7b-fp16///7B FP16 (Best quality, ~28GB)",
+                "seedvr2-7b-fp8///7B FP8 Mixed (Good quality, ~20GB)",
+                "seedvr2-7b-q4///7B GGUF Q4 (Acceptable quality, ~12GB)",
+                // 7B Sharp Models - Enhanced detail
+                "seedvr2-7b-sharp-fp16///7B Sharp FP16 (Best detail, ~28GB)",
+                "seedvr2-7b-sharp-fp8///7B Sharp FP8 Mixed (Good detail, ~20GB)",
+                "seedvr2-7b-sharp-q4///7B Sharp GGUF Q4 (Acceptable detail, ~12GB)"
             ],
             Group: SeedVR2Group,
             OrderPriority: 0
@@ -204,6 +224,18 @@ public class SeedVR2UpscalerExtension : Extension
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
             OrderPriority: 9
+        ));
+
+        SeedVR2InputNoiseScale = T2IParamTypes.Register<double>(new(
+            "SeedVR2 Input Noise",
+            "Amount of noise to add to the input image before encoding.\n" +
+            "Higher values = more creative freedom, lower faithfulness to original.\n" +
+            "Can help reduce certain artifacts. 0 = no noise (default).",
+            "0.0", Min: 0.0, Max: 1.0, Step: 0.05,
+            Toggleable: true, IsAdvanced: true,
+            FeatureFlag: "seedvr2_upscaler",
+            Group: SeedVR2Group,
+            OrderPriority: 9.1
         ));
 
         SeedVR2CacheModel = T2IParamTypes.Register<bool>(new(
@@ -590,7 +622,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["temporal_overlap"] = 0,
             ["prepend_frames"] = 0,
             ["color_correction"] = colorCorrection,
-            ["input_noise_scale"] = 0.0,
+            ["input_noise_scale"] = g.UserInput.Get(SeedVR2InputNoiseScale, 0.0),
             ["latent_noise_scale"] = latentNoiseScale,
             ["offload_device"] = "cpu",
             ["enable_debug"] = false
@@ -816,7 +848,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["temporal_overlap"] = 0,
             ["prepend_frames"] = 0,
             ["color_correction"] = colorCorrection,
-            ["input_noise_scale"] = 0.0,
+            ["input_noise_scale"] = g.UserInput.Get(SeedVR2InputNoiseScale, 0.0),
             ["latent_noise_scale"] = latentNoiseScale,
             ["offload_device"] = "cpu",
             ["enable_debug"] = false
@@ -1020,7 +1052,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["temporal_overlap"] = temporalOverlap,
             ["prepend_frames"] = 0,
             ["color_correction"] = colorCorrection,
-            ["input_noise_scale"] = 0.0,
+            ["input_noise_scale"] = g.UserInput.Get(SeedVR2InputNoiseScale, 0.0),
             ["latent_noise_scale"] = latentNoiseScale,
             ["offload_device"] = "cpu",
             ["enable_debug"] = false
@@ -1267,7 +1299,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["temporal_overlap"] = temporalOverlap,
             ["prepend_frames"] = 0,
             ["color_correction"] = colorCorrection,
-            ["input_noise_scale"] = 0.0,
+            ["input_noise_scale"] = g.UserInput.Get(SeedVR2InputNoiseScale, 0.0),
             ["latent_noise_scale"] = latentNoiseScale,
             ["offload_device"] = "cpu",
             ["enable_debug"] = false

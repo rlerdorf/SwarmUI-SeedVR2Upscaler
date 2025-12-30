@@ -78,7 +78,11 @@ To upscale videos as they are generated (inline with the workflow):
 
 This hooks SeedVR2 into the video generation pipeline after VAE Decode and before the video is saved, giving you upscaled video output in a single generation step.
 
-## Presets
+## Available Models
+
+You can choose from presets (which auto-configure Block Swap and Tiled VAE) or select individual models directly.
+
+### Presets
 
 | Preset | Model | Block Swap | Tiled VAE | VRAM Required |
 |--------|-------|------------|-----------|---------------|
@@ -86,6 +90,31 @@ This hooks SeedVR2 into the video generation pipeline after VAE Decode and befor
 | Balanced | 3B FP8 | 12 | No | ~12GB |
 | Quality | 7B FP8 | 16 | Yes | ~20GB |
 | Max Quality | 7B Sharp FP16 | 0 | No | ~24GB+ |
+
+### 3B Models (Faster, Lower VRAM)
+
+| Model | Quality | VRAM | Notes |
+|-------|---------|------|-------|
+| 3B FP16 | Best | ~16GB | Full precision, highest quality for 3B |
+| 3B FP8 | Good | ~12GB | 8-bit quantized, good balance |
+| 3B GGUF Q8 | Good | ~10GB | GGUF 8-bit quantized |
+| 3B GGUF Q4 | Acceptable | ~8GB | GGUF 4-bit quantized, lowest VRAM |
+
+### 7B Models (Higher Quality, Higher VRAM)
+
+| Model | Quality | VRAM | Notes |
+|-------|---------|------|-------|
+| 7B FP16 | Best | ~28GB | Full precision, highest quality |
+| 7B FP8 Mixed | Good | ~20GB | FP8 with last block in FP16 to reduce artifacts |
+| 7B GGUF Q4 | Acceptable | ~12GB | GGUF 4-bit quantized |
+
+### 7B Sharp Models (Enhanced Detail)
+
+| Model | Quality | VRAM | Notes |
+|-------|---------|------|-------|
+| 7B Sharp FP16 | Best detail | ~28GB | Full precision, sharpest output |
+| 7B Sharp FP8 Mixed | Good detail | ~20GB | FP8 with last block in FP16 |
+| 7B Sharp GGUF Q4 | Acceptable detail | ~12GB | GGUF 4-bit quantized |
 
 ## Parameters
 
@@ -107,8 +136,8 @@ This hooks SeedVR2 into the video generation pipeline after VAE Decode and befor
 | **SeedVR2 Tiled VAE** | Process in tiles to reduce VRAM | Preset-based |
 | **SeedVR2 Latent Noise** | Add noise in latent space for detail variation | 0.0 |
 | **SeedVR2 Cache Model** | Keep models loaded between generations | Disabled |
-| **SeedVR2 Attention Mode** | DiT attention backend (sdpa/flash_attn_2/flash_attn_3/sageattn_2/sageattn_3) | sdpa |
-| **SeedVR2 VAE Offload Device** | Offload device used by both DiT + VAE loaders | Disabled |
+| **SeedVR2 Attention Mode** | DiT attention backend (sdpa, flash_attn_2/3, sageattn_2/3) | sdpa |
+| **SeedVR2 VAE Offload Device** | Offload device for DiT + VAE loaders (cpu, cuda:N) | Auto |
 
 ### Video Parameters
 
