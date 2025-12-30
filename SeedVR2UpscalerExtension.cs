@@ -242,13 +242,14 @@ public class SeedVR2UpscalerExtension : Extension
         ));
 
         // Hidden parameters - used internally by the SeedVR2 Upscale button in output history
-        // These don't show in the UI since the preferred UX is clicking on an image/video
+        // VisibleNormally: false hides them from the UI
         SeedVR2VideoFile = T2IParamTypes.Register<string>(new(
             "SeedVR2 Video File",
             "Internal parameter for video file upscaling.",
             "",
             FeatureFlag: "seedvr2_upscaler",
-            ChangeWeight: 2
+            ChangeWeight: 2,
+            VisibleNormally: false
         ));
 
         SeedVR2ImageFile = T2IParamTypes.Register<string>(new(
@@ -256,7 +257,8 @@ public class SeedVR2UpscalerExtension : Extension
             "Internal parameter for image file upscaling.",
             "",
             FeatureFlag: "seedvr2_upscaler",
-            ChangeWeight: 2
+            ChangeWeight: 2,
+            VisibleNormally: false
         ));
 
         // Add workflow generation steps
