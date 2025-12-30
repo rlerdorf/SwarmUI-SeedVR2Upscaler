@@ -90,10 +90,10 @@ public static class SeedVR2DeviceUtils
     }
 
     /// <summary>
-    /// Resolves the correct VAE offload device string to send to ComfyUI nodes.
+    /// Resolves an offload device string to send to SeedVR2 ComfyUI nodes.
     /// The param is toggleable: if the user did not enable it, a reasonable device is selected automatically.
     /// </summary>
-    public static string ResolveSeedVR2VAEOffloadDevice(WorkflowGenerator g, T2IRegisteredParam<string> offloadParam, bool tiledVAE, bool cacheModel)
+    public static string ResolveSeedVR2OffloadDevice(WorkflowGenerator g, T2IRegisteredParam<string> offloadParam, bool requireNotNone, string requireNotNoneReason)
     {
         // Local device options are derived from SwarmUI-side detection and should match SeedVR2 python's get_device_list()
         // as closely as possible (without importing torch)
@@ -107,11 +107,11 @@ public static class SeedVR2DeviceUtils
         }
         else
         {
-            // Param not enabled (or not present): choose a sane device automatically
-            HashSet<string> allowed = localAllowed;
-            if (cacheModel)
+            // Param not enabled (or not present): choose a sane device automatically.
+            // If a non-"none" value is required, prefer cpu when available, otherwise first non-none.
+            if (requireNotNone)
             {
-                if (allowed.Contains("cpu"))
+                if (localAllowed.Contains("cpu"))
                 {
                     resolved = "cpu";
                 }
@@ -119,12 +119,6 @@ public static class SeedVR2DeviceUtils
                 {
                     resolved = localList.FirstOrDefault(v => !v.Equals("none", StringComparison.OrdinalIgnoreCase)) ?? "none";
                 }
-            }
-            else if (tiledVAE)
-            {
-                resolved = allowed.Contains("cpu")
-                    ? "cpu"
-                    : (localList.FirstOrDefault(v => !v.Equals("none", StringComparison.OrdinalIgnoreCase)) ?? "none");
             }
             else
             {
@@ -138,12 +132,19 @@ public static class SeedVR2DeviceUtils
             throw new SwarmUserErrorException($"SeedVR2: Invalid VAE offload device '{resolved}'. Valid values (locally detected) are: {valid}.");
         }
 
-        if (cacheModel && resolved.Equals("none", StringComparison.OrdinalIgnoreCase))
+        if (requireNotNone && resolved.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
-            throw new SwarmUserErrorException("SeedVR2: 'SeedVR2 Cache Model' requires 'SeedVR2 VAE Offload Device' to be set (for example 'cpu' or 'cuda:0').");
+            throw new SwarmUserErrorException($"SeedVR2: {requireNotNoneReason} requires 'SeedVR2 VAE Offload Device' to be set (for example 'cpu' or 'cuda:0').");
         }
 
         return resolved;
+    }
+
+    /// <summary>Back-compat wrapper for old call sites.</summary>
+    public static string ResolveSeedVR2VAEOffloadDevice(WorkflowGenerator g, T2IRegisteredParam<string> offloadParam, bool tiledVAE, bool cacheModel)
+    {
+        // VAE caching requires offload_device != none.
+        return ResolveSeedVR2OffloadDevice(g, offloadParam, requireNotNone: cacheModel, requireNotNoneReason: "'SeedVR2 Cache Model'");
     }
 }
 

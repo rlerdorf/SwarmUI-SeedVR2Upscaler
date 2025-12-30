@@ -108,7 +108,7 @@ This hooks SeedVR2 into the video generation pipeline after VAE Decode and befor
 | **SeedVR2 Latent Noise** | Add noise in latent space for detail variation | 0.0 |
 | **SeedVR2 Cache Model** | Keep models loaded between generations | Disabled |
 | **SeedVR2 Attention Mode** | DiT attention backend (sdpa/flash_attn_2/flash_attn_3/sageattn_2/sageattn_3) | sdpa |
-| **SeedVR2 VAE Offload Device** | Where to store the cached VAE model when caching is enabled | Disabled |
+| **SeedVR2 VAE Offload Device** | Offload device used by both DiT + VAE loaders | Disabled |
 
 ### Video Parameters
 
