@@ -39,6 +39,12 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Registered parameter for SeedVR2 model caching.</summary>
     public static T2IRegisteredParam<bool> SeedVR2CacheModel;
 
+    /// <summary>Registered parameter for SeedVR2 VAE offload device (required when model caching is enabled).</summary>
+    public static T2IRegisteredParam<string> SeedVR2VAEOffloadDevice;
+
+    /// <summary>Registered parameter for SeedVR2 DiT attention backend selection.</summary>
+    public static T2IRegisteredParam<string> SeedVR2AttentionMode;
+
     /// <summary>Registered parameter for SeedVR2 video batch size.</summary>
     public static T2IRegisteredParam<int> SeedVR2VideoBatchSize;
 
@@ -208,6 +214,44 @@ public class SeedVR2UpscalerExtension : Extension
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
             OrderPriority: 10
+        ));
+
+        SeedVR2AttentionMode = T2IParamTypes.Register<string>(new(
+            "SeedVR2 Attention Mode",
+            "Attention computation backend for the SeedVR2 DiT model.\n" +
+            "sdpa is recommended - stable and works everywhere.\n" +
+            "Flash/Sage options require extra Python packages and compatible GPUs.",
+            "sdpa",
+            IgnoreIf: "sdpa",
+            GetValues: _ => [
+                "sdpa///sdpa (Default / Most compatible)",
+                "flash_attn_2///flash_attn_2 (Flash Attention 2)",
+                "flash_attn_3///flash_attn_3 (Flash Attention 3)",
+                "sageattn_2///sageattn_2 (SageAttention 2)",
+                "sageattn_3///sageattn_3 (SageAttention 3)"
+            ],
+            IsAdvanced: true,
+            FeatureFlag: "seedvr2_upscaler",
+            Group: SeedVR2Group,
+            OrderPriority: 10.05
+        ));
+
+        SeedVR2VAEOffloadDevice = T2IParamTypes.Register<string>(new(
+            "SeedVR2 VAE Offload Device",
+            "Controls the 'offload_device' used by BOTH SeedVR2 model loader nodes (DiT + VAE).\n" +
+            "This affects where models are stored when not actively processing.\n" +
+            "Required for caching and for DiT BlockSwap: must not be 'none'.\n" +
+            "If you leave this setting disabled, SwarmUI will pick a reasonable device automatically when required.\n" +
+            "Device list is detected locally (no ComfyUI dependency). Common values include: cpu, cuda:0, cuda:1, mps.",
+            "none",
+            IgnoreIf: "none",
+            GetValues: SeedVR2DeviceUtils.GetSeedVR2OffloadDeviceValues,
+            IsAdvanced: true,
+            FeatureFlag: "seedvr2_upscaler",
+            Group: SeedVR2Group,
+            DependNonDefault: SeedVR2CacheModel.Type.ID,
+            Toggleable: true,
+            OrderPriority: 10.1
         ));
 
         // Video-specific parameters
@@ -450,6 +494,10 @@ public class SeedVR2UpscalerExtension : Extension
         double preDownscale = g.UserInput.Get(SeedVR2PreDownscale, 0.5);
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+        string attentionMode = g.UserInput.Get(SeedVR2AttentionMode, "sdpa").Before("///");
+        bool ditNeedsOffload = cacheModel || blockSwap > 0;
+        string ditOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: ditNeedsOffload, requireNotNoneReason: "DiT caching / Block Swap");
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: cacheModel, requireNotNoneReason: "VAE caching");
 
         // Determine if using 3B or 7B model and cap block swap accordingly
         bool is7BModel = modelKey.Contains("-7b-");
@@ -464,9 +512,6 @@ public class SeedVR2UpscalerExtension : Extension
         string configInfo = $"model={ditModel}, upscale={seedvrUpscaleBy:0.###}, blockSwap={blockSwap}, tiledVAE={tiledVAE}";
         Logs.Info($"SeedVR2: Upscaling {baseWidth}x{baseHeight} -> resolution={resolution}{modeInfo} ({configInfo})");
 
-        // Determine offload device based on blockswap setting
-        string offloadDevice = blockSwap > 0 ? "cpu" : "none";
-
         // Create SeedVR2LoadDiTModel node
         JObject ditLoaderInputs = new JObject()
         {
@@ -474,9 +519,9 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["blocks_to_swap"] = blockSwap,
             ["swap_io_components"] = blockSwap > 0,  // Also swap I/O components if using block swap
-            ["offload_device"] = offloadDevice,
+            ["offload_device"] = ditOffloadDevice,
             ["cache_model"] = cacheModel,
-            ["attention_mode"] = "sdpa"
+            ["attention_mode"] = attentionMode
         };
 
         // Add VRAM cleanup node to unload main generation model before SeedVR2
@@ -503,7 +548,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
@@ -686,6 +731,10 @@ public class SeedVR2UpscalerExtension : Extension
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
         bool twoStepMode = g.UserInput.Get(SeedVR2TwoStepMode, false);
         double preDownscale = g.UserInput.Get(SeedVR2PreDownscale, 0.5);
+        string attentionMode = g.UserInput.Get(SeedVR2AttentionMode, "sdpa").Before("///");
+        bool ditNeedsOffload = cacheModel || blockSwap > 0;
+        string ditOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: ditNeedsOffload, requireNotNoneReason: "DiT caching / Block Swap");
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: cacheModel, requireNotNoneReason: "VAE caching");
 
         // Cap block swap for model type
         bool is7BModel = modelKey.Contains("-7b-");
@@ -694,8 +743,6 @@ public class SeedVR2UpscalerExtension : Extension
         {
             blockSwap = maxBlocks;
         }
-
-        string offloadDevice = blockSwap > 0 ? "cpu" : "none";
 
         Logs.Info($"SeedVR2 Image File: model={ditModel}, blockSwap={blockSwap}, upscaleBy={seedvrUpscaleBy}, resolution={resolution}");
 
@@ -714,9 +761,9 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["blocks_to_swap"] = blockSwap,
             ["swap_io_components"] = blockSwap > 0,
-            ["offload_device"] = offloadDevice,
+            ["offload_device"] = ditOffloadDevice,
             ["cache_model"] = cacheModel,
-            ["attention_mode"] = "sdpa"
+            ["attention_mode"] = attentionMode
         };
         string ditLoaderNode = g.CreateNode("SeedVR2LoadDiTModel", ditLoaderInputs);
 
@@ -727,7 +774,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
@@ -901,6 +948,10 @@ public class SeedVR2UpscalerExtension : Extension
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+        string attentionMode = g.UserInput.Get(SeedVR2AttentionMode, "sdpa").Before("///");
+        bool ditNeedsOffload = cacheModel || blockSwap > 0;
+        string ditOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: ditNeedsOffload, requireNotNoneReason: "DiT caching / Block Swap");
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: cacheModel, requireNotNoneReason: "VAE caching");
 
         // Cap block swap for model type
         bool is7BModel = modelKey.Contains("-7b-");
@@ -909,8 +960,6 @@ public class SeedVR2UpscalerExtension : Extension
         {
             blockSwap = maxBlocks;
         }
-
-        string offloadDevice = blockSwap > 0 ? "cpu" : "none";
 
         Logs.Info($"SeedVR2 Video File: model={ditModel}, blockSwap={blockSwap}, upscaleBy={seedvrUpscaleBy}, colorCorrection={colorCorrection}");
 
@@ -929,9 +978,9 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["blocks_to_swap"] = blockSwap,
             ["swap_io_components"] = blockSwap > 0,
-            ["offload_device"] = offloadDevice,
+            ["offload_device"] = ditOffloadDevice,
             ["cache_model"] = cacheModel,
-            ["attention_mode"] = "sdpa"
+            ["attention_mode"] = attentionMode
         };
         string ditLoaderNode = g.CreateNode("SeedVR2LoadDiTModel", ditLoaderInputs);
 
@@ -942,7 +991,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
@@ -1139,6 +1188,10 @@ public class SeedVR2UpscalerExtension : Extension
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+        string attentionMode = g.UserInput.Get(SeedVR2AttentionMode, "sdpa").Before("///");
+        bool ditNeedsOffload = cacheModel || blockSwap > 0;
+        string ditOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: ditNeedsOffload, requireNotNoneReason: "DiT caching / Block Swap");
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2OffloadDevice(g, SeedVR2VAEOffloadDevice, requireNotNone: cacheModel, requireNotNoneReason: "VAE caching");
 
         // Cap block swap for model type
         bool is7BModel = modelKey.Contains("-7b-");
@@ -1150,9 +1203,6 @@ public class SeedVR2UpscalerExtension : Extension
         }
 
         Logs.Info($"SeedVR2 Video: Upscaling video frames to resolution {resolution} (model={ditModel}, batch_size={videoBatchSize}, temporal_overlap={temporalOverlap})");
-
-        // Determine offload device
-        string offloadDevice = blockSwap > 0 ? "cpu" : "none";
 
         // Add VRAM cleanup node to unload main generation model before SeedVR2
         JArray imageInputForUpscaler = originalVideoFrames;
@@ -1175,9 +1225,9 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["blocks_to_swap"] = blockSwap,
             ["swap_io_components"] = blockSwap > 0,
-            ["offload_device"] = offloadDevice,
+            ["offload_device"] = ditOffloadDevice,
             ["cache_model"] = cacheModel,
-            ["attention_mode"] = "sdpa"
+            ["attention_mode"] = attentionMode
         };
         string ditLoaderNode = g.CreateNode("SeedVR2LoadDiTModel", ditLoaderInputs);
 
@@ -1188,7 +1238,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
