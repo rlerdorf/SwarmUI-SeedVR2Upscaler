@@ -124,6 +124,7 @@ You can choose from presets (which auto-configure Block Swap and Tiled VAE) or s
 |-----------|-------------|---------|
 | **SeedVR2 Model** | Model/preset selection | Auto (VRAM-based) |
 | **SeedVR2 Upscale By** | Upscale factor (1.0-4.0+) | 1.0 |
+| **SeedVR2 Resolution** | Target resolution for shortest edge (0 = use Upscale By) | 0 |
 
 ### Advanced Parameters
 
@@ -135,6 +136,7 @@ You can choose from presets (which auto-configure Block Swap and Tiled VAE) or s
 | **SeedVR2 Pre-Downscale** | Downscale factor for 2-step mode (0.25-0.9) | 0.5 |
 | **SeedVR2 Tiled VAE** | Process in tiles to reduce VRAM | Preset-based |
 | **SeedVR2 Latent Noise** | Add noise in latent space for detail variation | 0.0 |
+| **SeedVR2 Input Noise** | Add noise to input before encoding (more creative freedom) | 0.0 |
 | **SeedVR2 Cache Model** | Keep models loaded between generations | Disabled |
 | **SeedVR2 Attention Mode** | DiT attention backend (sdpa, flash_attn_2/3, sageattn_2/3) | sdpa |
 | **SeedVR2 VAE Offload Device** | Offload device for DiT + VAE loaders (cpu, cuda:N) | Auto |

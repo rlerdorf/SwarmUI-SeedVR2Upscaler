@@ -18,6 +18,9 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Registered parameter for SeedVR2 upscale factor (applied after the normal workflow output).</summary>
     public static T2IRegisteredParam<double> SeedVR2UpscaleBy;
 
+    /// <summary>Registered parameter for SeedVR2 target resolution (shortest edge).</summary>
+    public static T2IRegisteredParam<int> SeedVR2Resolution;
+
     /// <summary>Registered parameter for SeedVR2 block swap count.</summary>
     public static T2IRegisteredParam<int> SeedVR2BlockSwap;
 
@@ -156,13 +159,28 @@ public class SeedVR2UpscalerExtension : Extension
             "SeedVR2 Upscale By",
             "How much to upscale the final decoded image by before/while running SeedVR2.\n" +
             "1.0 keeps the same size (detail enhancement pass).\n" +
-            "The slider UI is capped at 4.0, but you can type a higher value if desired.",
+            "The slider UI is capped at 4.0, but you can type a higher value if desired.\n" +
+            "Ignored if 'SeedVR2 Resolution' is set.",
             "1",
             IgnoreIf: "1",
             Min: 1, Max: 16, ViewMax: 4, Step: 0.25,
             ViewType: ParamViewType.SLIDER,
             Group: SeedVR2Group,
             OrderPriority: 1
+        ));
+
+        SeedVR2Resolution = T2IParamTypes.Register<int>(new(
+            "SeedVR2 Resolution",
+            "Target resolution for the shortest edge of the output image.\n" +
+            "Set to 0 to use 'Upscale By' factor instead.\n" +
+            "Example: 1080 will upscale so the shortest edge is 1080 pixels.",
+            "0",
+            IgnoreIf: "0",
+            Min: 0, Max: 8192, ViewMax: 4096, Step: 8,
+            ViewType: ParamViewType.SLIDER,
+            Toggleable: true,
+            Group: SeedVR2Group,
+            OrderPriority: 1.5
         ));
 
         SeedVR2BlockSwap = T2IParamTypes.Register<int>(new(
@@ -515,10 +533,23 @@ public class SeedVR2UpscalerExtension : Extension
         double seedvrUpscaleBy = g.UserInput.Get(SeedVR2UpscaleBy, 1.0);
         int baseWidth = (int)Math.Round(g.UserInput.GetImageWidth() * upscaleFactor);
         int baseHeight = (int)Math.Round(g.UserInput.GetImageHeight() * upscaleFactor);
-        int targetWidth = (int)Math.Round(baseWidth * seedvrUpscaleBy);
-        int targetHeight = (int)Math.Round(baseHeight * seedvrUpscaleBy);
-        // SeedVR2 uses the shortest edge as the resolution target
-        int resolution = Math.Min(targetWidth, targetHeight);
+        // Check if user specified a direct resolution target
+        int resolution;
+        bool directResolutionMode = g.UserInput.TryGet(SeedVR2Resolution, out int userResolution) && userResolution > 0;
+        if (directResolutionMode)
+        {
+            resolution = userResolution;
+        }
+        else
+        {
+            int targetWidth = (int)Math.Round(baseWidth * seedvrUpscaleBy);
+            int targetHeight = (int)Math.Round(baseHeight * seedvrUpscaleBy);
+            // SeedVR2 uses the shortest edge as the resolution target
+            resolution = Math.Min(targetWidth, targetHeight);
+        }
+        // When using direct resolution mode, don't limit max_resolution (let aspect ratio expand naturally)
+        // When using upscale factor, limit to prevent unexpected large outputs
+        int maxResolution = directResolutionMode ? 0 : resolution;
 
         // Get other optional parameters
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
@@ -616,7 +647,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["vae"] = new JArray() { vaeLoaderNode, 0 },
             ["seed"] = seed,
             ["resolution"] = resolution,
-            ["max_resolution"] = resolution,
+            ["max_resolution"] = maxResolution,
             ["batch_size"] = 1,
             ["uniform_batch_size"] = false,
             ["temporal_overlap"] = 0,
@@ -742,10 +773,16 @@ public class SeedVR2UpscalerExtension : Extension
             Logs.Warning($"SeedVR2 Image File: Unknown model key '{modelKey}', falling back to 3B FP8");
         }
 
-        // Calculate target resolution based on upscale factor
+        // Calculate target resolution based on upscale factor or direct resolution setting
         double seedvrUpscaleBy = g.UserInput.Get(SeedVR2UpscaleBy, 1.5);
         int resolution;
-        if (origWidth > 0 && origHeight > 0)
+        // Check if user specified a direct resolution target
+        bool directResolutionMode = g.UserInput.TryGet(SeedVR2Resolution, out int userResolution) && userResolution > 0;
+        if (directResolutionMode)
+        {
+            resolution = userResolution;
+        }
+        else if (origWidth > 0 && origHeight > 0)
         {
             int targetWidth = (int)Math.Round(origWidth * seedvrUpscaleBy);
             int targetHeight = (int)Math.Round(origHeight * seedvrUpscaleBy);
@@ -756,6 +793,8 @@ public class SeedVR2UpscalerExtension : Extension
             // Fallback if we couldn't read dimensions
             resolution = (int)(1024 * seedvrUpscaleBy);
         }
+        // When using direct resolution mode, don't limit max_resolution (let aspect ratio expand naturally)
+        int maxResolution = directResolutionMode ? 0 : resolution;
 
         // Get other parameters
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
@@ -842,7 +881,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["vae"] = new JArray() { vaeLoaderNode, 0 },
             ["seed"] = seed,
             ["resolution"] = resolution,
-            ["max_resolution"] = resolution,
+            ["max_resolution"] = maxResolution,
             ["batch_size"] = 1,  // Single image
             ["uniform_batch_size"] = false,
             ["temporal_overlap"] = 0,
@@ -972,9 +1011,18 @@ public class SeedVR2UpscalerExtension : Extension
 
         // Get resolution settings - use SeedVR2UpscaleBy to calculate target
         double seedvrUpscaleBy = g.UserInput.Get(SeedVR2UpscaleBy, 2.0);  // Default 2x for video
-        // Resolution will be calculated dynamically based on input video and upscale factor
-        // For now, use a sensible default that will be overridden by the actual video dimensions
-        int resolution = (int)(540 * seedvrUpscaleBy);  // Assume 540p input, scale up
+        // Check if user specified a direct resolution target
+        int resolution;
+        if (g.UserInput.TryGet(SeedVR2Resolution, out int userResolution) && userResolution > 0)
+        {
+            resolution = userResolution;
+        }
+        else
+        {
+            // Resolution will be calculated dynamically based on input video and upscale factor
+            // For now, use a sensible default that will be overridden by the actual video dimensions
+            resolution = (int)(540 * seedvrUpscaleBy);  // Assume 540p input, scale up
+        }
 
         // Get other parameters
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
@@ -1208,9 +1256,18 @@ public class SeedVR2UpscalerExtension : Extension
         double seedvrUpscaleBy = g.UserInput.Get(SeedVR2UpscaleBy, 1.0);
         int baseWidth = (int)Math.Round(g.UserInput.GetImageWidth() * upscaleFactor);
         int baseHeight = (int)Math.Round(g.UserInput.GetImageHeight() * upscaleFactor);
-        int targetWidth = (int)Math.Round(baseWidth * seedvrUpscaleBy);
-        int targetHeight = (int)Math.Round(baseHeight * seedvrUpscaleBy);
-        int resolution = Math.Min(targetWidth, targetHeight);
+        // Check if user specified a direct resolution target
+        int resolution;
+        if (g.UserInput.TryGet(SeedVR2Resolution, out int userResolution) && userResolution > 0)
+        {
+            resolution = userResolution;
+        }
+        else
+        {
+            int targetWidth = (int)Math.Round(baseWidth * seedvrUpscaleBy);
+            int targetHeight = (int)Math.Round(baseHeight * seedvrUpscaleBy);
+            resolution = Math.Min(targetWidth, targetHeight);
+        }
 
         // Get video-specific parameters
         int temporalOverlap = g.UserInput.Get(SeedVR2TemporalOverlap, 3);
