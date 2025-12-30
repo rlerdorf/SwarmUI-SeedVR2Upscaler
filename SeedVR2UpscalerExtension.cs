@@ -108,7 +108,8 @@ public class SeedVR2UpscalerExtension : Extension
         SeedVR2Group = new("SeedVR2 Upscaler", Toggles: true, Open: false, IsAdvanced: false,
             Description: "Implements <a class=\"translate\" href=\"https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler\">https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler</a>\n" +
             "IMAGE UPSCALING: Enable this group and set 'SeedVR2 Upscale By' to your desired scale.\n" +
-            "VIDEO UPSCALING: Select a video and click 'SeedVR2 Upscale' from the options.");
+            "VIDEO GENERATION: Also enable 'SeedVR2 Video Batch Size' to upscale videos during generation.\n" +
+            "EXISTING MEDIA: Select an image/video in history and click 'SeedVR2 Upscale'.");
 
         SeedVR2Model = T2IParamTypes.Register<string>(new(
             "SeedVR2 Model",
@@ -263,9 +264,12 @@ public class SeedVR2UpscalerExtension : Extension
         WorkflowGenerator.AddStep(GenerateSeedVR2ImageFileWorkflow, -2);
         // Priority -1: Video file upscaling (runs first, creates entire workflow if video file is set)
         WorkflowGenerator.AddStep(GenerateSeedVR2VideoFileWorkflow, -1);
-        // Priority 6: For images - after VAEDecode (1) and Segmentation/FaceRefine (5), before SaveImage (10)
+        // Priority 6: For images only - after VAEDecode (1) and Segmentation/FaceRefine (5), before SaveImage (10)
         // This ensures face refinement happens at original resolution, then SeedVR2 upscales the result
         WorkflowGenerator.AddStep(GenerateSeedVR2Workflow, 6);
+        // Priority 15: For video generation - after video generation and save at priority 11
+        // Uses ReplaceNodeConnection to update the existing save node to use upscaled frames
+        WorkflowGenerator.AddStep(GenerateSeedVR2VideoGenerationWorkflow, 15);
 
         Logs.Info("SeedVR2 Upscaler Extension loaded successfully.");
     }
@@ -335,11 +339,28 @@ public class SeedVR2UpscalerExtension : Extension
         }
     }
 
-    /// <summary>Generates the SeedVR2 workflow nodes when SeedVR2 upscaler is selected.</summary>
+    /// <summary>Generates the SeedVR2 workflow nodes for image upscaling only.</summary>
+    /// <remarks>
+    /// Runs at priority 6: after VAEDecode (1) and Segmentation/FaceRefine (5), before SaveImage (10).
+    /// For video generation upscaling, see GenerateSeedVR2VideoGenerationWorkflow at priority 15.
+    /// </remarks>
     public static void GenerateSeedVR2Workflow(WorkflowGenerator g)
     {
         // Skip if video file mode is active (handled by GenerateSeedVR2VideoFileWorkflow)
         if (g.UserInput.TryGet(SeedVR2VideoFile, out string videoFile) && !string.IsNullOrEmpty(videoFile))
+        {
+            return;
+        }
+
+        // Skip if image file mode is active (handled by GenerateSeedVR2ImageFileWorkflow)
+        if (g.UserInput.TryGet(SeedVR2ImageFile, out string imageFile) && !string.IsNullOrEmpty(imageFile))
+        {
+            return;
+        }
+
+        // Skip video generation mode - handled by GenerateSeedVR2VideoGenerationWorkflow at priority 15
+        // (Video generation happens at priority 11, so we can't intercept it here at priority 6)
+        if (g.UserInput.TryGet(SeedVR2VideoBatchSize, out _))
         {
             return;
         }
@@ -508,7 +529,7 @@ public class SeedVR2UpscalerExtension : Extension
             imageInputForUpscaler = new JArray() { downscaleNode, 0 };
         }
 
-        // Create SeedVR2VideoUpscaler node
+        // Create SeedVR2VideoUpscaler node (for single image)
         JObject upscalerInputs = new JObject()
         {
             ["image"] = imageInputForUpscaler,
@@ -517,7 +538,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["seed"] = seed,
             ["resolution"] = resolution,
             ["max_resolution"] = resolution,
-            ["batch_size"] = 1,  // Use 1 for single images
+            ["batch_size"] = 1,
             ["uniform_batch_size"] = false,
             ["temporal_overlap"] = 0,
             ["prepend_frames"] = 0,
@@ -527,6 +548,8 @@ public class SeedVR2UpscalerExtension : Extension
             ["offload_device"] = "cpu",
             ["enable_debug"] = false
         };
+
+        Logs.Info($"SeedVR2: Upscaling image to resolution {resolution} (model={ditModel}, blockSwap={blockSwap})");
 
         string upscalerNode = g.CreateNode("SeedVR2VideoUpscaler", upscalerInputs);
 
@@ -1003,5 +1026,247 @@ public class SeedVR2UpscalerExtension : Extension
         g.SkipFurtherSteps = true;
 
         Logs.Info($"SeedVR2 Video File: Complete workflow created - loading '{videoFile}', upscaling {seedvrUpscaleBy}x, saving as {codec}-{container}");
+    }
+
+    /// <summary>Generates SeedVR2 workflow for upscaling video generation output.</summary>
+    /// <remarks>
+    /// Runs at priority 15: after video generation and save (priority 11).
+    /// Uses ReplaceNodeConnection to update the existing save node to use upscaled frames.
+    /// </remarks>
+    public static void GenerateSeedVR2VideoGenerationWorkflow(WorkflowGenerator g)
+    {
+        // Skip if video file mode is active (handled by GenerateSeedVR2VideoFileWorkflow)
+        if (g.UserInput.TryGet(SeedVR2VideoFile, out string videoFile) && !string.IsNullOrEmpty(videoFile))
+        {
+            return;
+        }
+
+        // Skip if image file mode is active (handled by GenerateSeedVR2ImageFileWorkflow)
+        if (g.UserInput.TryGet(SeedVR2ImageFile, out string imageFile) && !string.IsNullOrEmpty(imageFile))
+        {
+            return;
+        }
+
+        // Only activate if video batch size is enabled (indicates video generation mode)
+        if (!g.UserInput.TryGet(SeedVR2VideoBatchSize, out int videoBatchSize))
+        {
+            return;
+        }
+
+        // Only activate if the SeedVR2 group toggle is enabled
+        if (!g.UserInput.TryGet(SeedVR2Model, out string modelChoice))
+        {
+            return;
+        }
+
+        // Verify feature is available
+        if (!g.Features.Contains("seedvr2_upscaler"))
+        {
+            throw new SwarmUserErrorException("SeedVR2 upscaler selected for video, but SeedVR2 nodes are not installed in ComfyUI. Please install the ComfyUI-SeedVR2_VideoUpscaler custom node.");
+        }
+
+        // Ensure we have video frames to upscale
+        if (g.FinalImageOut is null)
+        {
+            Logs.Warning("SeedVR2 Video: No FinalImageOut available to upscale");
+            return;
+        }
+
+        // Store the original video frames reference for ReplaceNodeConnection
+        JArray originalVideoFrames = g.FinalImageOut;
+
+        // Determine model variant and settings from selection
+        string modelKey = modelChoice.Before("///");
+        int blockSwap;
+        bool tiledVAE;
+        bool isPresetOrAuto = false;
+
+        if (modelKey == "seedvr2-auto")
+        {
+            (modelKey, blockSwap, tiledVAE) = DetectVRAMAndSelectModel();
+            isPresetOrAuto = true;
+        }
+        else if (QualityPresets.TryGetValue(modelKey, out var preset))
+        {
+            modelKey = preset.ModelKey;
+            blockSwap = preset.BlockSwap;
+            tiledVAE = preset.TiledVAE;
+            isPresetOrAuto = true;
+            Logs.Info($"SeedVR2 Video: Using preset with model={modelKey}, blockSwap={blockSwap}, tiledVAE={tiledVAE}");
+        }
+        else
+        {
+            blockSwap = g.UserInput.Get(SeedVR2BlockSwap, 0);
+            tiledVAE = g.UserInput.Get(SeedVR2TiledVAE, false);
+        }
+
+        // Allow user to override preset settings
+        if (isPresetOrAuto)
+        {
+            if (g.UserInput.TryGet(SeedVR2BlockSwap, out int userBlockSwap))
+            {
+                blockSwap = userBlockSwap;
+            }
+            if (g.UserInput.TryGet(SeedVR2TiledVAE, out bool userTiledVAE))
+            {
+                tiledVAE = userTiledVAE;
+            }
+        }
+
+        // Get the actual model filename
+        if (!DiTModelMap.TryGetValue(modelKey, out string ditModel))
+        {
+            ditModel = "seedvr2_ema_3b_fp8_e4m3fn.safetensors";
+            Logs.Warning($"SeedVR2 Video: Unknown model key '{modelKey}', falling back to 3B FP8");
+        }
+
+        // Calculate target resolution based on upscale factor
+        double upscaleFactor = g.UserInput.Get(T2IParamTypes.RefinerUpscale, 1.0);
+        double seedvrUpscaleBy = g.UserInput.Get(SeedVR2UpscaleBy, 1.0);
+        int baseWidth = (int)Math.Round(g.UserInput.GetImageWidth() * upscaleFactor);
+        int baseHeight = (int)Math.Round(g.UserInput.GetImageHeight() * upscaleFactor);
+        int targetWidth = (int)Math.Round(baseWidth * seedvrUpscaleBy);
+        int targetHeight = (int)Math.Round(baseHeight * seedvrUpscaleBy);
+        int resolution = Math.Min(targetWidth, targetHeight);
+
+        // Get video-specific parameters
+        int temporalOverlap = g.UserInput.Get(SeedVR2TemporalOverlap, 3);
+        bool uniformBatchSize = g.UserInput.Get(SeedVR2UniformBatchSize, true);
+
+        // Get other parameters
+        string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
+        double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
+        bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+
+        // Cap block swap for model type
+        bool is7BModel = modelKey.Contains("-7b-");
+        int maxBlocks = is7BModel ? 36 : 32;
+        if (blockSwap > maxBlocks)
+        {
+            Logs.Warning($"SeedVR2 Video: Block swap {blockSwap} exceeds max {maxBlocks} for {(is7BModel ? "7B" : "3B")} model, capping");
+            blockSwap = maxBlocks;
+        }
+
+        Logs.Info($"SeedVR2 Video: Upscaling video frames to resolution {resolution} (model={ditModel}, batch_size={videoBatchSize}, temporal_overlap={temporalOverlap})");
+
+        // Determine offload device
+        string offloadDevice = blockSwap > 0 ? "cpu" : "none";
+
+        // Add VRAM cleanup node to unload main generation model before SeedVR2
+        JArray imageInputForUpscaler = originalVideoFrames;
+        if (g.Features.Contains("kjnodes"))
+        {
+            string vramCleanupNode = g.CreateNode("VRAM_Debug", new JObject()
+            {
+                ["empty_cache"] = true,
+                ["gc_collect"] = true,
+                ["unload_all_models"] = true,
+                ["image_pass"] = originalVideoFrames
+            });
+            imageInputForUpscaler = new JArray() { vramCleanupNode, 1 };
+        }
+
+        // Create SeedVR2LoadDiTModel node
+        JObject ditLoaderInputs = new JObject()
+        {
+            ["model"] = ditModel,
+            ["device"] = "cuda:0",
+            ["blocks_to_swap"] = blockSwap,
+            ["swap_io_components"] = blockSwap > 0,
+            ["offload_device"] = offloadDevice,
+            ["cache_model"] = cacheModel,
+            ["attention_mode"] = "sdpa"
+        };
+        string ditLoaderNode = g.CreateNode("SeedVR2LoadDiTModel", ditLoaderInputs);
+
+        // Create SeedVR2LoadVAEModel node
+        JObject vaeLoaderInputs = new JObject()
+        {
+            ["model"] = "ema_vae_fp16.safetensors",
+            ["device"] = "cuda:0",
+            ["encode_tiled"] = tiledVAE,
+            ["decode_tiled"] = tiledVAE,
+            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["cache_model"] = cacheModel
+        };
+        if (tiledVAE)
+        {
+            vaeLoaderInputs["encode_tile_size"] = 1024;
+            vaeLoaderInputs["encode_tile_overlap"] = 128;
+            vaeLoaderInputs["decode_tile_size"] = 1024;
+            vaeLoaderInputs["decode_tile_overlap"] = 128;
+        }
+        string vaeLoaderNode = g.CreateNode("SeedVR2LoadVAEModel", vaeLoaderInputs);
+
+        // Get seed from user input
+        long seed = g.UserInput.Get(T2IParamTypes.Seed, 42);
+
+        // Create SeedVR2VideoUpscaler node
+        JObject upscalerInputs = new JObject()
+        {
+            ["image"] = imageInputForUpscaler,
+            ["dit"] = new JArray() { ditLoaderNode, 0 },
+            ["vae"] = new JArray() { vaeLoaderNode, 0 },
+            ["seed"] = seed,
+            ["resolution"] = resolution,
+            ["max_resolution"] = 0,  // No limit for video
+            ["batch_size"] = videoBatchSize,
+            ["uniform_batch_size"] = uniformBatchSize,
+            ["temporal_overlap"] = temporalOverlap,
+            ["prepend_frames"] = 0,
+            ["color_correction"] = colorCorrection,
+            ["input_noise_scale"] = 0.0,
+            ["latent_noise_scale"] = latentNoiseScale,
+            ["offload_device"] = "cpu",
+            ["enable_debug"] = false
+        };
+
+        string upscalerNode = g.CreateNode("SeedVR2VideoUpscaler", upscalerInputs);
+        JArray upscalerOutput = new JArray() { upscalerNode, 0 };
+
+        Logs.Info($"SeedVR2 Video: Created upscaler node '{upscalerNode}'");
+
+        // Find and update the SwarmSaveAnimationWS node that was created at priority 11
+        // We can't use ReplaceNodeConnection because it would also replace our own input, creating a cycle
+        string originalNodeId = originalVideoFrames[0].ToString();
+        int originalOutputIndex = originalVideoFrames[1].Value<int>();
+        bool foundSaveNode = false;
+
+        g.RunOnNodesOfClass("SwarmSaveAnimationWS", (nodeId, nodeData) =>
+        {
+            JArray imagesInput = nodeData["inputs"]?["images"] as JArray;
+            if (imagesInput != null &&
+                imagesInput[0].ToString() == originalNodeId &&
+                imagesInput[1].Value<int>() == originalOutputIndex)
+            {
+                // Update this save node to use the upscaled output
+                nodeData["inputs"]["images"] = upscalerOutput;
+                Logs.Info($"SeedVR2 Video: Updated save node '{nodeId}' to use upscaled frames");
+                foundSaveNode = true;
+            }
+        });
+
+        // Also check for video boomerang nodes that might be in the chain
+        g.RunOnNodesOfClass("SwarmVideoBoomerang", (nodeId, nodeData) =>
+        {
+            JArray imagesInput = nodeData["inputs"]?["images"] as JArray;
+            if (imagesInput != null &&
+                imagesInput[0].ToString() == originalNodeId &&
+                imagesInput[1].Value<int>() == originalOutputIndex)
+            {
+                nodeData["inputs"]["images"] = upscalerOutput;
+                Logs.Info($"SeedVR2 Video: Updated boomerang node '{nodeId}' to use upscaled frames");
+            }
+        });
+
+        if (!foundSaveNode)
+        {
+            Logs.Warning("SeedVR2 Video: Could not find save node to update - upscaling may not be applied");
+        }
+
+        // Update FinalImageOut for any subsequent steps
+        g.FinalImageOut = upscalerOutput;
+
+        Logs.Info($"SeedVR2 Video: Video upscaling workflow complete");
     }
 }

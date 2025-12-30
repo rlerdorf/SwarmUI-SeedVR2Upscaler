@@ -53,7 +53,7 @@ The simplest way to upscale:
 
 The upscaler uses your current SeedVR2 settings (model, upscale factor, etc.) from the SeedVR2 Upscaler group.
 
-### Upscaling During Generation
+### Upscaling Images During Generation
 
 To automatically upscale generated images:
 
@@ -67,6 +67,16 @@ To automatically upscale generated images:
    - **Max Quality (7B Sharp FP16)**: Best quality (~24GB+)
 4. Set **SeedVR2 Upscale By** to your desired upscale factor (e.g., 1.5x, 2x)
 5. Generate your image - SeedVR2 will upscale it after generation
+
+### Upscaling Videos During Generation
+
+To upscale videos as they are generated (inline with the workflow):
+
+1. Follow the same steps as image upscaling above
+2. Additionally, enable **SeedVR2 Video Batch Size** in the advanced parameters
+3. Generate your video - SeedVR2 will upscale the frames before saving
+
+This hooks SeedVR2 into the video generation pipeline after VAE Decode and before the video is saved, giving you upscaled video output in a single generation step.
 
 ## Presets
 
@@ -107,6 +117,8 @@ To automatically upscale generated images:
 | **SeedVR2 Uniform Batch Size** | Use consistent batch sizes | Enabled |
 
 ## How 2-Step Mode Works
+
+**Note:** 2-Step mode applies to image upscaling only. Video generation upscaling processes frames directly without downscaling.
 
 ```
 Original Image (e.g., 1920x2560)
