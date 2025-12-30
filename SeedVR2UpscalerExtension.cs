@@ -1365,8 +1365,6 @@ public class SeedVR2UpscalerExtension : Extension
         string upscalerNode = g.CreateNode("SeedVR2VideoUpscaler", upscalerInputs);
         JArray upscalerOutput = new JArray() { upscalerNode, 0 };
 
-        Logs.Info($"SeedVR2 Video: Created upscaler node '{upscalerNode}'");
-
         // Find and update the SwarmSaveAnimationWS node that was created at priority 11
         // We can't use ReplaceNodeConnection because it would also replace our own input, creating a cycle
         string originalNodeId = originalVideoFrames[0].ToString();
@@ -1382,7 +1380,6 @@ public class SeedVR2UpscalerExtension : Extension
             {
                 // Update this save node to use the upscaled output
                 nodeData["inputs"]["images"] = upscalerOutput;
-                Logs.Info($"SeedVR2 Video: Updated save node '{nodeId}' to use upscaled frames");
                 foundSaveNode = true;
             }
         });
