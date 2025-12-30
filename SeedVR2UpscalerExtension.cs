@@ -39,6 +39,9 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Registered parameter for SeedVR2 model caching.</summary>
     public static T2IRegisteredParam<bool> SeedVR2CacheModel;
 
+    /// <summary>Registered parameter for SeedVR2 VAE offload device (required when model caching is enabled).</summary>
+    public static T2IRegisteredParam<string> SeedVR2VAEOffloadDevice;
+
     /// <summary>Registered parameter for SeedVR2 video batch size.</summary>
     public static T2IRegisteredParam<int> SeedVR2VideoBatchSize;
 
@@ -208,6 +211,23 @@ public class SeedVR2UpscalerExtension : Extension
             FeatureFlag: "seedvr2_upscaler",
             Group: SeedVR2Group,
             OrderPriority: 10
+        ));
+
+        SeedVR2VAEOffloadDevice = T2IParamTypes.Register<string>(new(
+            "SeedVR2 VAE Offload Device",
+            "Where to store the cached SeedVR2 VAE model when 'SeedVR2 Cache Model' is enabled.\n" +
+            "Required for caching: must not be 'none'.\n" +
+            "If you leave this setting disabled, SwarmUI will pick a reasonable device automatically when caching is enabled.\n" +
+            "Device list is detected locally (no ComfyUI dependency). Common values include: cpu, cuda:0, cuda:1, mps.",
+            "none",
+            IgnoreIf: "none",
+            GetValues: SeedVR2DeviceUtils.GetSeedVR2OffloadDeviceValues,
+            IsAdvanced: true,
+            FeatureFlag: "seedvr2_upscaler",
+            Group: SeedVR2Group,
+            DependNonDefault: SeedVR2CacheModel.Type.ID,
+            Toggleable: true,
+            OrderPriority: 10.1
         ));
 
         // Video-specific parameters
@@ -448,6 +468,7 @@ public class SeedVR2UpscalerExtension : Extension
         double preDownscale = g.UserInput.Get(SeedVR2PreDownscale, 0.5);
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2VAEOffloadDevice(g, SeedVR2VAEOffloadDevice, tiledVAE, cacheModel);
 
         // Determine if using 3B or 7B model and cap block swap accordingly
         bool is7BModel = modelKey.Contains("-7b-");
@@ -501,7 +522,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
@@ -684,6 +705,7 @@ public class SeedVR2UpscalerExtension : Extension
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
         bool twoStepMode = g.UserInput.Get(SeedVR2TwoStepMode, false);
         double preDownscale = g.UserInput.Get(SeedVR2PreDownscale, 0.5);
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2VAEOffloadDevice(g, SeedVR2VAEOffloadDevice, tiledVAE, cacheModel);
 
         // Cap block swap for model type
         bool is7BModel = modelKey.Contains("-7b-");
@@ -725,7 +747,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
@@ -899,6 +921,7 @@ public class SeedVR2UpscalerExtension : Extension
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2VAEOffloadDevice(g, SeedVR2VAEOffloadDevice, tiledVAE, cacheModel);
 
         // Cap block swap for model type
         bool is7BModel = modelKey.Contains("-7b-");
@@ -940,7 +963,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
@@ -1137,6 +1160,7 @@ public class SeedVR2UpscalerExtension : Extension
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
         double latentNoiseScale = g.UserInput.Get(SeedVR2LatentNoiseScale, 0.0);
         bool cacheModel = g.UserInput.Get(SeedVR2CacheModel, false);
+        string vaeOffloadDevice = SeedVR2DeviceUtils.ResolveSeedVR2VAEOffloadDevice(g, SeedVR2VAEOffloadDevice, tiledVAE, cacheModel);
 
         // Cap block swap for model type
         bool is7BModel = modelKey.Contains("-7b-");
@@ -1186,7 +1210,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["device"] = "cuda:0",
             ["encode_tiled"] = tiledVAE,
             ["decode_tiled"] = tiledVAE,
-            ["offload_device"] = tiledVAE ? "cpu" : "none",
+            ["offload_device"] = vaeOffloadDevice,
             ["cache_model"] = cacheModel
         };
         if (tiledVAE)
