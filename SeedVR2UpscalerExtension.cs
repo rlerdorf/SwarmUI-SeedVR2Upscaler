@@ -547,9 +547,6 @@ public class SeedVR2UpscalerExtension : Extension
             // SeedVR2 uses the shortest edge as the resolution target
             resolution = Math.Min(targetWidth, targetHeight);
         }
-        // When using direct resolution mode, don't limit max_resolution (let aspect ratio expand naturally)
-        // When using upscale factor, limit to prevent unexpected large outputs
-        int maxResolution = directResolutionMode ? 0 : resolution;
 
         // Get other optional parameters
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
@@ -647,7 +644,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["vae"] = new JArray() { vaeLoaderNode, 0 },
             ["seed"] = seed,
             ["resolution"] = resolution,
-            ["max_resolution"] = maxResolution,
+            ["max_resolution"] = 0,
             ["batch_size"] = 1,
             ["uniform_batch_size"] = false,
             ["temporal_overlap"] = 0,
@@ -811,8 +808,6 @@ public class SeedVR2UpscalerExtension : Extension
             // Fallback if we couldn't read dimensions
             resolution = (int)(1024 * seedvrUpscaleBy);
         }
-        // When using direct resolution mode, don't limit max_resolution (let aspect ratio expand naturally)
-        int maxResolution = directResolutionMode ? 0 : resolution;
 
         // Get other parameters
         string colorCorrection = g.UserInput.Get(SeedVR2ColorCorrection, "none");
@@ -899,7 +894,7 @@ public class SeedVR2UpscalerExtension : Extension
             ["vae"] = new JArray() { vaeLoaderNode, 0 },
             ["seed"] = seed,
             ["resolution"] = resolution,
-            ["max_resolution"] = maxResolution,
+            ["max_resolution"] = 0,
             ["batch_size"] = 1,  // Single image
             ["uniform_batch_size"] = false,
             ["temporal_overlap"] = 0,
