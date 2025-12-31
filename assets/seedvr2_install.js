@@ -37,8 +37,9 @@ addInstallButton('seedvrupscaler', 'seedvr2_upscaler', 'seedvr2_upscaler', 'Inst
                             label: 'SeedVR2 Upscale',
                             title: 'Upscale this ' + (isVideo ? 'video' : 'image') + ' using SeedVR2 AI upscaler',
                             onclick: (e) => {
-                                // Use fullsrc which is the relative path from output folder
-                                let filePath = fullsrc;
+                                // Use getImageOutPrefix() to get correct prefix (Output or View/{user_id})
+                                let prefix = typeof getImageOutPrefix === 'function' ? getImageOutPrefix() : 'Output';
+                                let filePath = prefix + '/' + fullsrc;
 
                                 // Build input overrides with the appropriate file parameter
                                 let input_overrides = {

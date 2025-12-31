@@ -694,13 +694,31 @@ public class SeedVR2UpscalerExtension : Extension
             imageFile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + imageFile[1..];
         }
 
-        // Resolve Output/ paths to actual file system paths using user's output directory
+        // Resolve Output/ or View/ paths to actual file system paths using user's output directory
         User user = g.UserInput.SourceSession?.User;
-        if (user is not null && imageFile.StartsWith("Output/"))
+        if (user is not null)
         {
-            string relativePath = imageFile["Output/".Length..];
-            string root = Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, user.OutputDirectory);
-            imageFile = UserImageHistoryHelper.GetRealPathFor(user, $"{root}/{relativePath}", root: root);
+            string relativePath = null;
+            if (imageFile.StartsWith("Output/"))
+            {
+                relativePath = imageFile["Output/".Length..];
+            }
+            else if (imageFile.StartsWith("View/"))
+            {
+                // View/{user_id}/path format - strip View/{user_id}/ prefix
+                string afterView = imageFile["View/".Length..];
+                int slashIndex = afterView.IndexOf('/');
+                if (slashIndex > 0)
+                {
+                    relativePath = afterView[(slashIndex + 1)..];
+                }
+            }
+
+            if (relativePath is not null)
+            {
+                string root = Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, user.OutputDirectory);
+                imageFile = UserImageHistoryHelper.GetRealPathFor(user, $"{root}/{relativePath}", root: root);
+            }
         }
 
         // Validate the file exists
@@ -937,13 +955,31 @@ public class SeedVR2UpscalerExtension : Extension
             videoFile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + videoFile[1..];
         }
 
-        // Resolve Output/ paths to actual file system paths using user's output directory
+        // Resolve Output/ or View/ paths to actual file system paths using user's output directory
         User user = g.UserInput.SourceSession?.User;
-        if (user is not null && videoFile.StartsWith("Output/"))
+        if (user is not null)
         {
-            string relativePath = videoFile["Output/".Length..];
-            string root = Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, user.OutputDirectory);
-            videoFile = UserImageHistoryHelper.GetRealPathFor(user, $"{root}/{relativePath}", root: root);
+            string relativePath = null;
+            if (videoFile.StartsWith("Output/"))
+            {
+                relativePath = videoFile["Output/".Length..];
+            }
+            else if (videoFile.StartsWith("View/"))
+            {
+                // View/{user_id}/path format - strip View/{user_id}/ prefix
+                string afterView = videoFile["View/".Length..];
+                int slashIndex = afterView.IndexOf('/');
+                if (slashIndex > 0)
+                {
+                    relativePath = afterView[(slashIndex + 1)..];
+                }
+            }
+
+            if (relativePath is not null)
+            {
+                string root = Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, user.OutputDirectory);
+                videoFile = UserImageHistoryHelper.GetRealPathFor(user, $"{root}/{relativePath}", root: root);
+            }
         }
 
         // Validate the file exists
