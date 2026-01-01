@@ -196,7 +196,7 @@ public class SeedVR2UpscalerExtension : Extension
         SeedVR2ColorCorrection = T2IParamTypes.Register<string>(new(
             "SeedVR2 Color Correction",
             "Color correction method for SeedVR2 upscaling.\nNone uses SeedVR2's native output. Other options adjust colors to match the original image.",
-            "none",
+            "lab",
             GetValues: _ => ["none", "lab", "wavelet", "wavelet_adaptive", "hsv", "adain"],
             Toggleable: true, IsAdvanced: true,
             FeatureFlag: "seedvr2_upscaler",
