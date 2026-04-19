@@ -18,6 +18,11 @@ addInstallButton('seedvrupscaler', 'seedvr2_image_upscaler', 'seedvr2_image_upsc
         'SeedVR2 Upscale',
         (src) => {
             if (typeof currentBackendFeatureSet === 'undefined' || !currentBackendFeatureSet.includes('seedvr2_upscaler')) {
+                let message = 'SeedVR2 Upscaler is not available on the current backend. Please install or enable the SeedVR2 Upscaler node first.';
+                console.warn('SeedVR2: ' + message);
+                if (typeof showToast === 'function') {
+                    showToast(message);
+                }
                 return;
             }
 
@@ -89,14 +94,17 @@ addInstallButton('seedvrupscaler', 'seedvr2_image_upscaler', 'seedvr2_image_upsc
                     if (readable) {
                         let metadataParsed = JSON.parse(readable);
                         if (metadataParsed.sui_image_params) {
-                            let skipParams = [
+                            // Normalize param keys the same way as C#'s T2IParamTypes.CleanTypeName: lowercase letters only
+                            let normalizeKey = (key) => String(key).toLowerCase().replace(/[^a-z]/g, '');
+                            let skipParams = new Set([
                                 'model', 'refinermodel', 'videomodel', 'videoswapmodel', 'loras', 'loraweights', 'loratencweights',  // Models may not exist
-                                'images', 'swarm_version',  // Special params
-                                'width', 'height', 'aspectratio', 'sidelength'  // Resolution comes from source image
-                            ];
+                                'images', 'swarmversion',  // Special params
+                                'width', 'height', 'aspectratio', 'sidelength', 'altresolutionheightmult', 'rawresolution',  // Resolution comes from source image
+                                'internalbackendtype', 'exactbackendid'  // Backend params not relevant for file upscaling
+                            ]);
                             for (let key in metadataParsed.sui_image_params) {
-                                let keyLower = key.toLowerCase();
-                                if (!keyLower.startsWith('seedvr') && !skipParams.includes(keyLower)) {
+                                let normalizedKey = normalizeKey(key);
+                                if (!normalizedKey.startsWith('seedvr') && !skipParams.has(normalizedKey)) {
                                     input_overrides[key] = metadataParsed.sui_image_params[key];
                                 }
                             }
