@@ -96,9 +96,14 @@ addInstallButton('seedvrupscaler', 'seedvr2_image_upscaler', 'seedvr2_image_upsc
                         if (metadataParsed.sui_image_params) {
                             // Normalize param keys the same way as C#'s T2IParamTypes.CleanTypeName: lowercase letters only
                             let normalizeKey = (key) => String(key).toLowerCase().replace(/[^a-z]/g, '');
+                            // Mirrors C#'s SkipSourceMetadataParams, plus JS-only entries:
+                            // - 'images': C# ignores it implicitly via workflow logic; JS must skip explicitly
+                            //   to prevent a batch-count from metadata overriding input_overrides['images']=1
+                            // - 'swarmversion': C# filters it via TryGetType (not a registered param);
+                            //   JS has no type-check fallback so must skip it explicitly
                             let skipParams = new Set([
                                 'model', 'refinermodel', 'videomodel', 'videoswapmodel', 'loras', 'loraweights', 'loratencweights',  // Models may not exist
-                                'images', 'swarmversion',  // Special params
+                                'images', 'swarmversion',  // JS-only: see comment above
                                 'width', 'height', 'aspectratio', 'sidelength', 'altresolutionheightmult', 'rawresolution',  // Resolution comes from source image
                                 'internalbackendtype', 'exactbackendid'  // Backend params not relevant for file upscaling
                             ]);
