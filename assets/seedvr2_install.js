@@ -7,6 +7,11 @@ addInstallButton('seedvrupscaler', 'seedvr2_image_upscaler', 'seedvr2_image_upsc
 
 // Add SeedVR2 Upscale button to image/video context menus via SwarmUI's registerMediaButton API
 (function() {
+    if (typeof registerMediaButton !== 'function') {
+        console.warn('SeedVR2: registerMediaButton is not available - SwarmUI version may be too old');
+        return;
+    }
+
     let videoExtensions = ['mp4', 'webm', 'gif', 'mov', 'avi', 'mkv'];
 
     registerMediaButton(
@@ -17,14 +22,15 @@ addInstallButton('seedvrupscaler', 'seedvr2_image_upscaler', 'seedvr2_image_upsc
             }
 
             let isDataImage = src.startsWith('data:');
-            let isVideo = false;
+            let isDataVideo = isDataImage && src.toLowerCase().startsWith('data:video/');
+            let isVideo = isDataVideo;
             if (!isDataImage) {
                 let extension = src.split('.').pop().toLowerCase().split('?')[0];
                 isVideo = videoExtensions.includes(extension);
             }
 
             // Data URL videos are not supported
-            if (isVideo && isDataImage) {
+            if (isDataVideo) {
                 return;
             }
 
