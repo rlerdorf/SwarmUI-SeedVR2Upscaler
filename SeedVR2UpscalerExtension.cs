@@ -1750,7 +1750,7 @@ public class SeedVR2UpscalerExtension : Extension
             blockSwap = maxBlocks;
         }
 
-        g.UserInput.TryGet(SeedVR2VideoBatchSize, out int videoBatchSize);
+        int videoBatchSize = g.UserInput.Get(SeedVR2VideoBatchSize, 33);
         Logs.Info($"SeedVR2 Video: Upscaling video frames to resolution {resolution} (model={ditModel}, batch_size={videoBatchSize}, temporal_overlap={temporalOverlap})");
 
         // Add VRAM cleanup node to unload main generation model before SeedVR2
