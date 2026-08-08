@@ -965,6 +965,13 @@ public class SeedVR2UpscalerExtension : Extension
             throw new SwarmUserErrorException("SeedVR2 Image File upscaling requires SeedVR2 nodes. Please install the ComfyUI-SeedVR2_VideoUpscaler custom node.");
         }
 
+        // The image is always embedded as base64 (see below) rather than referencing a host file path,
+        // so this backend feature (and unrestricted custom nodes) is required.
+        if (!g.Features.Contains("comfy_loadimage_b64") || WorkflowGenerator.RestrictCustomNodes)
+        {
+            throw new SwarmUserErrorException("SeedVR2 Image File upscaling requires SwarmUI's ComfyUI backend nodes (comfy_loadimage_b64) and cannot run with restricted custom nodes.");
+        }
+
         // Get image dimensions to calculate upscaled resolution
         int origWidth = 0, origHeight = 0;
 
@@ -1026,12 +1033,23 @@ public class SeedVR2UpscalerExtension : Extension
                 throw new SwarmUserErrorException($"SeedVR2 Image File not found: {imageFile}");
             }
 
-            // Get image dimensions from file
+            // Read the file into memory so it can be embedded directly in the workflow (via base64),
+            // rather than handing ComfyUI a host filesystem path - LoadImage is sandboxed to its own
+            // input/ directory and rejects paths outside of it (also required for remote backends).
             try
             {
-                using ISImage image = ISImage.Load(imageFile);
-                origWidth = image.Width;
-                origHeight = image.Height;
+                byte[] rawData = System.IO.File.ReadAllBytes(imageFile);
+                sourceImage = new Image(rawData, MediaType.GetByExtension(imageFile.AfterLast('.').ToLowerFast()));
+            }
+            catch (Exception ex)
+            {
+                throw new SwarmUserErrorException($"SeedVR2 Image File: Could not read image: {ex.Message}");
+            }
+
+            // Get image dimensions from the loaded data
+            try
+            {
+                (origWidth, origHeight) = sourceImage.GetResolution();
                 Logs.Info($"SeedVR2 Image File: Source dimensions {origWidth}x{origHeight}");
             }
             catch (Exception ex)
@@ -1134,22 +1152,13 @@ public class SeedVR2UpscalerExtension : Extension
 
         // === Create workflow nodes ===
 
-        // 1. Load the image - use LoadImage for data URLs (supports SwarmLoadImageB64),
-        //    or CreateNode for file paths
-        string loadImageNode;
-        if (isDataUrl && sourceImage is not null)
+        // 1. Load the image - both data URLs and file paths are embedded as base64 via SwarmUI's
+        //    LoadImage helper (SwarmLoadImageB64), so ComfyUI never sees a host filesystem path.
+        if (sourceImage is null)
         {
-            // Use SwarmUI's LoadImage which handles base64 images via SwarmLoadImageB64
-            loadImageNode = g.LoadImage(sourceImage, "${seedvr2_source_image}", false).Path[0].ToString();
+            throw new SwarmUserErrorException("SeedVR2 Image File: could not load source image.");
         }
-        else
-        {
-            // Use ComfyUI's LoadImage for file paths
-            loadImageNode = g.CreateNode("LoadImage", new JObject()
-            {
-                ["image"] = imageFile
-            });
-        }
+        string loadImageNode = g.LoadImage(sourceImage, "${seedvr2_source_image}", false).Path[0].ToString();
 
         // 2. Add VRAM cleanup node to unload any existing models before SeedVR2
         // This frees up VRAM so SeedVR2 has enough room to load its models
@@ -1338,6 +1347,13 @@ public class SeedVR2UpscalerExtension : Extension
             throw new SwarmUserErrorException("SeedVR2 Video File upscaling requires SeedVR2 nodes. Please install the ComfyUI-SeedVR2_VideoUpscaler custom node.");
         }
 
+        // The video is always embedded as base64 (see below) rather than referencing a host file path,
+        // so this backend feature (and unrestricted custom nodes) is required.
+        if (!g.Features.Contains("comfy_loadimage_b64") || WorkflowGenerator.RestrictCustomNodes)
+        {
+            throw new SwarmUserErrorException("SeedVR2 Video File upscaling requires SwarmUI's ComfyUI backend nodes (comfy_loadimage_b64) and cannot run with restricted custom nodes.");
+        }
+
         // Expand path (support ~ for home directory)
         if (videoFile.StartsWith("~/"))
         {
@@ -1375,6 +1391,20 @@ public class SeedVR2UpscalerExtension : Extension
         if (!System.IO.File.Exists(videoFile))
         {
             throw new SwarmUserErrorException($"SeedVR2 Video File not found: {videoFile}");
+        }
+
+        // Read the file into memory so it can be embedded directly in the workflow (via base64),
+        // rather than handing ComfyUI a host filesystem path - LoadVideo is sandboxed to its own
+        // input/ directory and rejects paths outside of it (also required for remote backends).
+        VideoFile sourceVideo;
+        try
+        {
+            byte[] rawVideoData = System.IO.File.ReadAllBytes(videoFile);
+            sourceVideo = new VideoFile(rawVideoData, MediaType.GetByExtension(videoFile.AfterLast('.').ToLowerFast()));
+        }
+        catch (Exception ex)
+        {
+            throw new SwarmUserErrorException($"SeedVR2 Video File: Could not read video: {ex.Message}");
         }
 
         // Get video parameters
@@ -1465,22 +1495,12 @@ public class SeedVR2UpscalerExtension : Extension
 
         // === Create workflow nodes ===
 
-        // 1. LoadVideo node - load the existing video file (outputs Video object)
-        string loadVideoNode = g.CreateNode("LoadVideo", new JObject()
-        {
-            ["file"] = videoFile
-        });
-
-        // 2. GetVideoComponents - extract frames, audio, and fps from Video object
-        // LoadVideo outputs a Video object, not frames, so we need this conversion step
-        string getComponentsNode = g.CreateNode("GetVideoComponents", new JObject()
-        {
-            ["video"] = new JArray() { loadVideoNode, 0 }
-        });
-        // GetVideoComponents outputs: [0]=images, [1]=audio, [2]=fps
-        JArray loadedVideoFrames = new JArray() { getComponentsNode, 0 };
-        JArray videoAudio = new JArray() { getComponentsNode, 1 };
-        JArray videoFps = new JArray() { getComponentsNode, 2 };
+        // 1. Load the video - embedded as base64 via SwarmUI's LoadVideo helper (SwarmLoadVideoB64 +
+        //    GetVideoComponents internally), so ComfyUI never sees a host filesystem path.
+        WGNodeData videoData = g.LoadVideo(sourceVideo, "${seedvr2_source_video}", false);
+        JArray loadedVideoFrames = videoData.Path;
+        JArray videoAudio = videoData.AttachedAudio?.Path;
+        JArray videoFps = (JArray)videoData.FPS;
 
         // 3. Add VRAM cleanup node to unload any existing models before SeedVR2
         // This frees up VRAM so SeedVR2 has enough room to load its models
