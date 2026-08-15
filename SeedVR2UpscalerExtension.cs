@@ -285,7 +285,7 @@ public class SeedVR2UpscalerExtension : Extension
         ));
 
         SeedVR2Model = T2IParamTypes.Register<string>(new(
-            "SeedVR2 Model",
+            "SeedVR2 Preset Model",
             "Which SeedVR2 model to use.\n" +
             "Presets auto-configure Block Swap and Tiled VAE for typical VRAM constraints.\n" +
             "Auto detects your GPU VRAM and selects an appropriate configuration.\n" +
@@ -1982,7 +1982,7 @@ public class SeedVR2UpscalerExtension : Extension
     /// <remarks>IDs are cleaned by T2IParamTypes.CleanTypeName which keeps only lowercase letters.</remarks>
     private static readonly HashSet<string> SeedVR2ParamIds =
     [
-        "seedvrmodel", "seedvrupscaleby", "seedvrresolution", "seedvrblockswap",
+        "seedvrpresetmodel", "seedvrupscaleby", "seedvrresolution", "seedvrblockswap",
         "seedvrcolorcorrection", "seedvrstepmode", "seedvrtwostepmode", "seedvrpredownscale", "seedvrtiledvae",
         "seedvrlatentnoise", "seedvrinputnoise", "seedvrlatentnoisescale", "seedvrinputnoisescale", "seedvrcontrolaftergenerate",
         "seedvrcachemodel", "seedvrattentionmode", "seedvrtorchcompile",
