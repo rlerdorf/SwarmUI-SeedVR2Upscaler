@@ -357,7 +357,7 @@ public class SeedVR2UpscalerExtension : Extension
         ));
 
         SeedVR2PreDownscale = T2IParamTypes.Register<double>(new(
-            "SeedVR2 Pre-Downscale",
+            "SeedVR2 2-Step Pre-Downscale",
             "Factor to downscale the image before SeedVR2 upscaling (when 2-step mode is enabled).\n0.5 means halve the resolution before upscaling.",
             "0.5", Min: 0.25, Max: 0.9, Step: 0.05,
             Toggleable: true, IsAdvanced: true,
@@ -1983,7 +1983,7 @@ public class SeedVR2UpscalerExtension : Extension
     private static readonly HashSet<string> SeedVR2ParamIds =
     [
         "seedvrpresetmodel", "seedvrupscaleby", "seedvrresolution", "seedvrblockswap",
-        "seedvrcolorcorrection", "seedvrstepmode", "seedvrtwostepmode", "seedvrpredownscale", "seedvrtiledvae",
+        "seedvrcolorcorrection", "seedvrstepmode", "seedvrtwostepmode", "seedvrsteppredownscale", "seedvrtiledvae",
         "seedvrlatentnoise", "seedvrinputnoise", "seedvrlatentnoisescale", "seedvrinputnoisescale", "seedvrcontrolaftergenerate",
         "seedvrcachemodel", "seedvrattentionmode", "seedvrtorchcompile",
         "seedvrimagetilesize", "seedvrimagemaskblur", "seedvrimagetileoverlap", "seedvrtilepadding", "seedvrimagetileupscaleresolution",

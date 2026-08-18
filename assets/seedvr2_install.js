@@ -58,7 +58,7 @@ addInstallButton('seedvrupscaler', 'seedvr2_image_upscaler', 'seedvr2_image_upsc
             // Note: SwarmUI strips "2" from "SeedVR2" when creating element IDs
             let seedvr2Params = [
                 'seedvrpresetmodel', 'seedvrupscaleby', 'seedvrresolution', 'seedvrblockswap',
-                'seedvrcolorcorrection', 'seedvrtwostepmode', 'seedvrpredownscale', 'seedvrtiledvae',
+                'seedvrcolorcorrection', 'seedvrtwostepmode', 'seedvrsteppredownscale', 'seedvrtiledvae',
                 'seedvrlatentnoisescale', 'seedvrinputnoisescale', 'seedvrcachemodel', 'seedvrattentionmode',
                 'seedvrvaeoffloaddevice', 'seedvrvideobatchsize', 'seedvrtemporaloverlap', 'seedvruniformbatchsize',
                 'seedvrimagetilesize', 'seedvrimagemaskblur', 'seedvrimagetileoverlap',
