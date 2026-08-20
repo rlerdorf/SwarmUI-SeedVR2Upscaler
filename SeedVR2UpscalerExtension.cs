@@ -13,8 +13,10 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Formats.Tiff;
+using SixLabors.ImageSharp.PixelFormats;
 using SwarmUI.Utils;
 using ISImage = SixLabors.ImageSharp.Image;
+using ISImage32 = SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>;
 using Image = SwarmUI.Utils.Image;
 
 namespace SeedVR2Upscaler;
@@ -142,8 +144,42 @@ public class SeedVR2UpscalerExtension : Extension
     /// <summary>Temporary storage for source EXIF profiles, keyed by request ID. Avoids serialization into image metadata.</summary>
     private static readonly ConcurrentDictionary<long, byte[]> PendingSourceExif = new();
 
+    /// <summary>Temporary storage for a source image's global CIELAB statistics, used to re-harmonize tiled
+    /// SeedVR2 upscales (which have per-tile color correction disabled - see
+    /// <see cref="SeedVR2ImageUpscaler.CreateNode"/>) with a single global correction pass in
+    /// <see cref="HandleSeedVR2PostGeneration"/>. Keyed by "{userId}:{requestId}" rather than the bare
+    /// request ID, since <see cref="User.GetNextRequestId"/> is a per-user counter and bare IDs collide
+    /// across different users.</summary>
+    private static readonly ConcurrentDictionary<string, (SeedVR2ColorMatch.LabStats Stats, long ExpiresAt)> PendingColorMatch = new();
+
+    /// <summary>How long a <see cref="PendingColorMatch"/> entry stays valid before being treated as
+    /// abandoned (eg a request that errored before its PostBatchEvent fired), in milliseconds.</summary>
+    private const long PendingColorMatchTimeoutMs = 30 * 60 * 1000;
+
     /// <summary>Tracks workflow generators where the pre-video image upscale (priority 6) actually ran, so priority 15 can skip.</summary>
     private static readonly ConditionalWeakTable<WorkflowGenerator, object> PreVideoUpscaleRan = new();
+
+    /// <summary>Builds the <see cref="PendingColorMatch"/> key for a given input, or null if it has no user session.</summary>
+    /// <param name="input">The user input to key on.</param>
+    private static string GetColorMatchKey(T2IParamInput input)
+    {
+        string userId = input?.SourceSession?.User?.UserID;
+        return userId is null ? null : $"{userId}:{input.UserRequestId}";
+    }
+
+    /// <summary>Drops abandoned <see cref="PendingColorMatch"/> entries, eg from generations that errored before PostBatchEvent fired.</summary>
+    private static void PruneStalePendingColorMatch()
+    {
+        long now = Environment.TickCount64;
+        foreach (KeyValuePair<string, (SeedVR2ColorMatch.LabStats Stats, long ExpiresAt)> entry in PendingColorMatch)
+        {
+            if (entry.Value.ExpiresAt < now)
+            {
+                PendingColorMatch.TryRemove(entry.Key, out _);
+                Logs.Debug($"SeedVR2 ColorMatch: Pruned stale entry {entry.Key}");
+            }
+        }
+    }
 
     /// <summary>Gets the SwarmUI model directory path for SeedVR2 models.</summary>
     public static string GetSeedVR2ModelDirectory()
@@ -337,7 +373,11 @@ public class SeedVR2UpscalerExtension : Extension
 
         SeedVR2ColorCorrection = T2IParamTypes.Register<string>(new(
             "SeedVR2 Color Correction",
-            "Color correction method for SeedVR2 upscaling.\nNone uses SeedVR2's native output. Other options adjust colors to match the original image.",
+            "Color correction method for SeedVR2 upscaling.\nNone uses SeedVR2's native output. Other options adjust colors to match the original image.\n" +
+            "Note: when the tiled image upscaler subgroup is enabled, per-tile correction is disabled (it causes\n" +
+            "discolored seams at tile boundaries) and any non-'none' value instead applies one global CIELAB\n" +
+            "chroma match against the source after upscaling. This only applies to existing-image upscales;\n" +
+            "in-generation upscales have no source reference available and get no correction.",
             "lab",
             GetValues: _ => ["none", "lab", "wavelet", "wavelet_adaptive", "hsv", "adain"],
             Toggleable: true, IsAdvanced: true,
@@ -562,6 +602,7 @@ public class SeedVR2UpscalerExtension : Extension
     {
         T2IEngine.PostGenerateEvent -= HandleSeedVR2PostGeneration;
         T2IEngine.PostBatchEvent -= HandleSeedVR2PostBatch;
+        PendingColorMatch.Clear();
     }
 
     /// <summary>Detects available GPU VRAM and returns the best model configuration.</summary>
@@ -898,7 +939,15 @@ public class SeedVR2UpscalerExtension : Extension
         string upscalerNode;
         if (ShouldUseSeedVR2ImageUpscalerNode(g))
         {
-            upscalerNode = SeedVR2ImageUpscaler.CreateNode(g, imageInputForUpscaler, ditLoaderNode, vaeLoaderNode, seed, resolution, colorCorrection, vaeOffloadDevice);
+            if (colorCorrection != "none")
+            {
+                // No global color-harmonization pass is possible here: the pre-upscale image only exists
+                // inside ComfyUI (it was never decoded into C#), so there's no source reference to match
+                // against. Per-tile correction stays disabled regardless (see SeedVR2ImageUpscaler.CreateNode)
+                // to avoid tile-seam smearing; see color-stitching.md.
+                Logs.Info($"SeedVR2: Tiled image upscaler ignores color correction '{colorCorrection}' for in-generation upscales - no source image reference is available in this workflow.");
+            }
+            upscalerNode = SeedVR2ImageUpscaler.CreateNode(g, imageInputForUpscaler, ditLoaderNode, vaeLoaderNode, seed, resolution, vaeOffloadDevice);
         }
         else
         {
@@ -1237,10 +1286,11 @@ public class SeedVR2UpscalerExtension : Extension
         }
 
         // 6. Upscale the image (optional image node when subgroup is enabled, otherwise SeedVR2VideoUpscaler fallback)
+        bool usingImageUpscalerNode = ShouldUseSeedVR2ImageUpscalerNode(g);
         string upscalerNode;
-        if (ShouldUseSeedVR2ImageUpscalerNode(g))
+        if (usingImageUpscalerNode)
         {
-            upscalerNode = SeedVR2ImageUpscaler.CreateNode(g, imageInputForUpscaler, ditLoaderNode, vaeLoaderNode, seed, resolution, colorCorrection, vaeOffloadDevice);
+            upscalerNode = SeedVR2ImageUpscaler.CreateNode(g, imageInputForUpscaler, ditLoaderNode, vaeLoaderNode, seed, resolution, vaeOffloadDevice);
         }
         else
         {
@@ -1313,6 +1363,33 @@ public class SeedVR2UpscalerExtension : Extension
             catch (Exception ex)
             {
                 Logs.Debug($"SeedVR2: Could not extract EXIF from file: {ex.Message}");
+            }
+        }
+
+        // 8b. Stash the source image's global CIELAB statistics so the tiled upscaler's output can be
+        // re-harmonized once, globally, in HandleSeedVR2PostGeneration. The tiled node's own per-tile
+        // correction is disabled (see SeedVR2ImageUpscaler.CreateNode) because grading each tile against
+        // only its own local crop makes neighboring tiles disagree and smear at the seam - see color-stitching.md.
+        if (usingImageUpscalerNode && colorCorrection != "none" && sourceImage is not null)
+        {
+            string colorKey = GetColorMatchKey(g.UserInput);
+            if (colorKey is null)
+            {
+                Logs.Debug("SeedVR2 ColorMatch: No user session available, skipping global color harmonization.");
+            }
+            else
+            {
+                try
+                {
+                    PruneStalePendingColorMatch();
+                    SeedVR2ColorMatch.LabStats stats = SeedVR2ColorMatch.ComputeLabStats(sourceImage.ToIS);
+                    PendingColorMatch[colorKey] = (stats, Environment.TickCount64 + PendingColorMatchTimeoutMs);
+                    Logs.Info($"SeedVR2 ColorMatch: Captured source stats for {colorKey} (a={stats.AMean:0.##}±{stats.AStd:0.##}, b={stats.BMean:0.##}±{stats.BStd:0.##})");
+                }
+                catch (Exception ex)
+                {
+                    Logs.Warning($"SeedVR2 ColorMatch: Could not compute source color statistics: {ex.Message}");
+                }
             }
         }
 
@@ -2095,18 +2172,82 @@ public class SeedVR2UpscalerExtension : Extension
         Logs.Info($"SeedVR2 Metadata: Applied {appliedCount} original params from source image");
     }
 
-    /// <summary>Handles PostGenerateEvent - currently unused but reserved for future enhancements.</summary>
+    /// <summary>Handles PostGenerateEvent to apply a single global color-harmonization pass to tiled
+    /// SeedVR2 image upscales (see <see cref="SeedVR2ImageUpscaler.CreateNode"/> and color-stitching.md
+    /// for why per-tile correction is disabled and re-applied globally here instead).</summary>
     /// <param name="p">The post-generation event parameters.</param>
     private static void HandleSeedVR2PostGeneration(T2IEngine.PostGenerationEventParams p)
     {
-        // EXIF is now extracted during workflow generation in GenerateSeedVR2ImageFileWorkflow
-        // This handler is kept for future enhancements
+        // EXIF is extracted during workflow generation in GenerateSeedVR2ImageFileWorkflow; applied in HandleSeedVR2PostBatch.
+        if (PendingColorMatch.IsEmpty)
+        {
+            return;
+        }
+        string colorKey = GetColorMatchKey(p.UserInput);
+        // TryGetValue, not TryRemove: this fires once per image in a batch (all sharing one key); HandleSeedVR2PostBatch owns removal.
+        if (colorKey is null || !PendingColorMatch.TryGetValue(colorKey, out (SeedVR2ColorMatch.LabStats Stats, long ExpiresAt) pending))
+        {
+            return;
+        }
+        if (p.UserInput.ExtraMeta.ContainsKey("intermediate"))
+        {
+            return;
+        }
+        if (p.File is not ImageFile image || image.Type.MetaType != MediaMetaType.Image)
+        {
+            return;
+        }
+        try
+        {
+            long start = Environment.TickCount64;
+            ISImage decoded = image.ToIS;
+            ISImage32 working = decoded as ISImage32;
+            bool cloned = working is null;
+            if (cloned)
+            {
+                working = decoded.CloneAs<Rgba32>();
+            }
+            SeedVR2ColorMatch.LabStats outputStats = SeedVR2ColorMatch.ComputeLabStats(working);
+            if (!SeedVR2ColorMatch.ApplyChromaTransfer(working, outputStats, pending.Stats))
+            {
+                if (cloned)
+                {
+                    working.Dispose();
+                }
+                Logs.Debug($"SeedVR2 ColorMatch: Output already matches source color statistics for {colorKey}, left unmodified.");
+                return;
+            }
+            if (cloned)
+            {
+                // ConvertTo (called from Session.ApplyMetadata right after this handler returns) reads the
+                // cached ToIS, not RawData - the cache must be kept in sync or the correction is silently lost.
+                image._CacheISImg = working;
+                decoded.Dispose();
+            }
+            image.RawData = ImageFile.ISImgToPngBytes(working);
+            image.Type = MediaType.ImagePng;
+            Logs.Info($"SeedVR2 ColorMatch: Harmonized {working.Width}x{working.Height} output for {colorKey} in {Environment.TickCount64 - start}ms");
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"SeedVR2 ColorMatch: Failed to apply global color harmonization: {ex.Message}");
+        }
     }
 
-    /// <summary>Handles PostBatchEvent to apply source EXIF metadata to output files.</summary>
+    /// <summary>Handles PostBatchEvent to apply source EXIF metadata to output files and clean up
+    /// pending per-request color-match state.</summary>
     /// <param name="p">The post-batch event parameters.</param>
     private static void HandleSeedVR2PostBatch(T2IEngine.PostBatchEventParams p)
     {
+        // Clear the stashed color-match stats for this request. HandleSeedVR2PostGeneration fires once per
+        // image and only reads them; this fires once per batch and owns removal. Runs unconditionally
+        // (before the EXIF early-return below) so it also cleans up for sources with no EXIF, eg PNG.
+        string colorKey = GetColorMatchKey(p.UserInput);
+        if (colorKey is not null && PendingColorMatch.TryRemove(colorKey, out _))
+        {
+            Logs.Debug($"SeedVR2 ColorMatch: Cleared pending stats for {colorKey}");
+        }
+
         // Check if we have stored source EXIF for this request
         long requestId = p.UserInput.UserRequestId;
         if (!PendingSourceExif.TryRemove(requestId, out byte[] exifBytes))

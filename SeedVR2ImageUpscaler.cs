@@ -104,7 +104,17 @@ public static class SeedVR2ImageUpscaler
     }
 
     /// <summary>Creates and returns a SeedVR2 image upscaler node.</summary>
-    public static string CreateNode(WorkflowGenerator g, JArray imageInputForUpscaler, string ditLoaderNode, string vaeLoaderNode, long seed, int resolution, string colorCorrection, string tensorOffloadDevice)
+    /// <remarks>
+    /// Color correction is always sent as "none" here. The tiled node applies whatever method
+    /// is requested independently per tile, matching each tile's output statistics to only that
+    /// tile's own local crop - neighboring tiles with different content (eg skin vs. background)
+    /// end up graded differently, and the feathered blend at the seam smears the two disagreeing
+    /// gradings together into a visible discolored patch. Correction is instead applied once,
+    /// globally, after generation - see <see cref="SeedVR2UpscalerExtension.HandleSeedVR2PostGeneration"/>.
+    /// This also disables correction on the node's internal reference-image call, which is harmless
+    /// since that reference is only used as a structural canvas for blending, not for color.
+    /// </remarks>
+    public static string CreateNode(WorkflowGenerator g, JArray imageInputForUpscaler, string ditLoaderNode, string vaeLoaderNode, long seed, int resolution, string tensorOffloadDevice)
     {
         JObject inputs = new()
         {
@@ -120,7 +130,7 @@ public static class SeedVR2ImageUpscaler
             ["tiling_strategy"] = g.UserInput.Get(SeedVR2UpscalerExtension.SeedVR2ImageTilingStrategy, "Chess"),
             ["anti_aliasing_strength"] = g.UserInput.Get(SeedVR2UpscalerExtension.SeedVR2ImageAntiAliasingStrength, 0.0),
             ["blending_method"] = g.UserInput.Get(SeedVR2UpscalerExtension.SeedVR2ImageBlendingMethod, "auto"),
-            ["color_correction"] = colorCorrection,
+            ["color_correction"] = "none",
             ["input_noise_scale"] = g.UserInput.Get(SeedVR2UpscalerExtension.SeedVR2InputNoiseScale, 0.0),
             ["offload_device"] = tensorOffloadDevice,
             ["enable_debug"] = false
