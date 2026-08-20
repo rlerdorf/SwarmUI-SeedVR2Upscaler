@@ -254,6 +254,18 @@ public class SeedVR2UpscalerExtension : Extension
             ComfyUISelfStartBackend.FoldersToForwardInComfyPath.Add("seedvr2");
         }
 
+        // Register our own vendored copy of the SeedVR2 Image Upscaler node (python/README.md
+        // has the full rationale). ComfyUI loads custom_nodes roots in the order SwarmUI lists
+        // them (DLNodes, then ExtraNodes, then CustomNodePaths) and last-registered wins for a
+        // given node name with no duplicate-name warning, so this deterministically overrides
+        // SwarmUI core's bundled (buggy, tile-color-drift) copy under DLNodes without needing
+        // any change to SwarmUI core or a merged upstream PR.
+        string vendoredPythonNodesPath = Path.GetFullPath($"{FilePath}python");
+        if (Directory.Exists(vendoredPythonNodesPath) && !ComfyUISelfStartBackend.CustomNodePaths.Contains(vendoredPythonNodesPath))
+        {
+            ComfyUISelfStartBackend.CustomNodePaths.Add(vendoredPythonNodesPath);
+        }
+
         ScanForDiscoveredModels();
 
         // Register installable feature for the SeedVR2 ComfyUI node
