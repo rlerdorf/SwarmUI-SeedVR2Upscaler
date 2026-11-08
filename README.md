@@ -15,8 +15,9 @@ Integrates [SeedVR2](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) AI u
 
 ## Requirements
 
-1. **SeedVR2 ComfyUI Node**: [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) - can be installed with one click from the SeedVR2 Upscaler parameter group in SwarmUI
-2. **KJNodes** (recommended): Install [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) for automatic VRAM cleanup before upscaling
+1. **SwarmUI from November 6, 2026 or later**: SwarmUI switched its image library from ImageSharp to ImageMagick (Magick.NET) in [#1578](https://github.com/mcmonkeyprojects/SwarmUI/pull/1578), and this extension now builds against Magick.NET. If you are on an older SwarmUI, update it (or stay on an older release of this extension).
+2. **SeedVR2 ComfyUI Node**: [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) - can be installed with one click from the SeedVR2 Upscaler parameter group in SwarmUI
+3. **KJNodes** (recommended): Install [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) for automatic VRAM cleanup before upscaling
 
 ## Installation
 

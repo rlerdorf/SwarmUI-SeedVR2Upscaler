@@ -1,7 +1,4 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using ISImage = SixLabors.ImageSharp.Image;
-using ISImage32 = SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>;
+using ImageMagick;
 
 namespace SeedVR2Upscaler;
 
@@ -123,35 +120,102 @@ public static class SeedVR2ColorMatch
         b = LinearToByte(0.0556434 * x - 0.2040259 * y + 1.0572252 * z);
     }
 
-    /// <summary>Computes whole-image CIELAB mean and standard deviation. Fully transparent pixels are excluded.</summary>
-    /// <param name="image">The image to measure. Cloned to Rgba32 only if it is not already in that format.</param>
-    public static LabStats ComputeLabStats(ISImage image)
+    /// <summary>Converts a Q16 quantum to the nearest 8-bit value.</summary>
+    /// <param name="value">Channel value in [0, 65535].</param>
+    private static byte QuantumToByte(ushort value)
     {
-        ISImage32 direct = image as ISImage32;
-        ISImage32 rgba = direct ?? image.CloneAs<Rgba32>();
+        return (byte)((value + 128) / 257);
+    }
+
+    /// <summary>Converts an 8-bit value to a Q16 quantum.</summary>
+    /// <param name="value">Channel value in [0, 255].</param>
+    private static ushort ByteToQuantum(byte value)
+    {
+        return (ushort)(value * 257);
+    }
+
+    /// <summary>Returns true if the image's pixels can be read directly as sRGB red/green/blue channels.</summary>
+    /// <param name="image">The image to check.</param>
+    private static bool IsSrgb(IMagickImage<ushort> image)
+    {
+        if (image.ColorSpace != ColorSpace.sRGB)
+        {
+            return false;
+        }
+        bool red = false, green = false, blue = false;
+        foreach (PixelChannel channel in image.Channels)
+        {
+            red |= channel == PixelChannel.Red;
+            green |= channel == PixelChannel.Green;
+            blue |= channel == PixelChannel.Blue;
+        }
+        return red && green && blue;
+    }
+
+    /// <summary>Converts the image in place to direct-class sRGB with red/green/blue (and alpha, if present)
+    /// channels, so its pixels can be read and written by <see cref="ComputeLabStats"/> and
+    /// <see cref="ApplyChromaTransfer"/>. Grayscale, CMYK, linear-RGB and palette images are all normalized.</summary>
+    /// <param name="image">The image to convert.</param>
+    public static void ConvertToSrgb(IMagickImage<ushort> image)
+    {
+        if (image.ColorSpace != ColorSpace.sRGB)
+        {
+            image.ColorSpace = ColorSpace.sRGB;
+        }
+        if (!IsSrgb(image))
+        {
+            image.ColorType = image.HasAlpha ? ColorType.TrueColorAlpha : ColorType.TrueColor;
+        }
+        if (image.ClassType != ClassType.Direct)
+        {
+            image.ClassType = ClassType.Direct;
+        }
+    }
+
+    /// <summary>Gets the offset of a channel within each pixel, or -1 if the image has no such channel.</summary>
+    /// <param name="pixels">The image's pixel collection.</param>
+    /// <param name="channel">The channel to find.</param>
+    private static int ChannelOffset(IPixelCollection<ushort> pixels, PixelChannel channel)
+    {
+        return pixels.GetChannelIndex(channel) is { } index ? (int)index : -1;
+    }
+
+    /// <summary>Computes whole-image CIELAB mean and standard deviation. Fully transparent pixels are excluded.
+    /// Math is done at 8-bit precision, matching the 8-bit images SeedVR2 produces.</summary>
+    /// <param name="image">The image to measure. Not modified; cloned and converted only if it is not already sRGB.</param>
+    public static LabStats ComputeLabStats(IMagickImage<ushort> image)
+    {
+        IMagickImage<ushort> srgb = image;
+        if (!IsSrgb(image))
+        {
+            srgb = image.Clone();
+            ConvertToSrgb(srgb);
+        }
         try
         {
             double sumL = 0, sumA = 0, sumB = 0, sumL2 = 0, sumA2 = 0, sumB2 = 0;
             long count = 0;
-            rgba.ProcessPixelRows(accessor =>
+            using IUnsafePixelCollection<ushort> pixels = srgb.GetPixelsUnsafe();
+            int stride = (int)pixels.Channels;
+            int ri = ChannelOffset(pixels, PixelChannel.Red), gi = ChannelOffset(pixels, PixelChannel.Green), bi = ChannelOffset(pixels, PixelChannel.Blue);
+            int ai = ChannelOffset(pixels, PixelChannel.Alpha);
+            uint width = srgb.Width;
+            int height = (int)srgb.Height;
+            for (int y = 0; y < height; y++)
             {
-                for (int y = 0; y < accessor.Height; y++)
+                ReadOnlySpan<ushort> row = pixels.GetReadOnlyArea(0, y, width, 1);
+                for (int o = 0; o < row.Length; o += stride)
                 {
-                    Span<Rgba32> row = accessor.GetRowSpan(y);
-                    for (int x = 0; x < row.Length; x++)
+                    if (ai >= 0 && row[o + ai] == 0)
                     {
-                        Rgba32 px = row[x];
-                        if (px.A == 0)
-                        {
-                            continue;
-                        }
-                        (double l, double a, double b) = RgbToLab(px.R, px.G, px.B);
-                        sumL += l; sumA += a; sumB += b;
-                        sumL2 += l * l; sumA2 += a * a; sumB2 += b * b;
-                        count++;
+                        continue;
                     }
+                    (double l, double a, double b) = RgbToLab(QuantumToByte(row[o + ri]), QuantumToByte(row[o + gi]), QuantumToByte(row[o + bi]));
+                    sumL += l; sumA += a; sumB += b;
+                    sumL2 += l * l; sumA2 += a * a; sumB2 += b * b;
+                    count++;
                 }
-            });
+            }
             if (count == 0)
             {
                 return new(0, 0, 0, 0, 0, 0);
@@ -163,9 +227,9 @@ public static class SeedVR2ColorMatch
         }
         finally
         {
-            if (direct is null)
+            if (!ReferenceEquals(srgb, image))
             {
-                rgba.Dispose();
+                srgb.Dispose();
             }
         }
     }
@@ -174,14 +238,15 @@ public static class SeedVR2ColorMatch
     /// a*/b* statistics toward <paramref name="reference"/>. Lightness is deliberately left untouched, since
     /// L* variance is resolution- and sharpness-dependent and the upscaler's added high-frequency detail
     /// should not be flattened back toward a lower-resolution source's contrast.</summary>
-    /// <param name="image">The image to adjust in place.</param>
+    /// <param name="image">The image to adjust in place. Converted to sRGB first (see <see cref="ConvertToSrgb"/>)
+    /// if needed, so callers must pass an image they own, never a shared cached frame.</param>
     /// <param name="source">Statistics measured from <paramref name="image"/> itself.</param>
     /// <param name="reference">Target statistics, measured from the pre-upscale source image.</param>
     /// <param name="strength">Blend toward the fully-matched result, 0 = no change, 1 = full transfer.</param>
     /// <param name="maxScale">Cap on the per-channel standard-deviation scale factor, guarding against
     /// over-correction on near-monochrome images.</param>
     /// <returns>True if any pixel was modified.</returns>
-    public static bool ApplyChromaTransfer(ISImage32 image, LabStats source, LabStats reference, double strength = 1.0, double maxScale = 2.0)
+    public static bool ApplyChromaTransfer(IMagickImage<ushort> image, LabStats source, LabStats reference, double strength = 1.0, double maxScale = 2.0)
     {
         double scaleA = Math.Clamp(reference.AStd / Math.Max(source.AStd, 1e-6), 1.0 / maxScale, maxScale);
         double scaleB = Math.Clamp(reference.BStd / Math.Max(source.BStd, 1e-6), 1.0 / maxScale, maxScale);
@@ -194,26 +259,32 @@ public static class SeedVR2ColorMatch
         {
             return false;
         }
-        image.ProcessPixelRows(accessor =>
+        ConvertToSrgb(image);
+        using IUnsafePixelCollection<ushort> pixels = image.GetPixelsUnsafe();
+        int stride = (int)pixels.Channels;
+        int ri = ChannelOffset(pixels, PixelChannel.Red), gi = ChannelOffset(pixels, PixelChannel.Green), bi = ChannelOffset(pixels, PixelChannel.Blue);
+        int ai = ChannelOffset(pixels, PixelChannel.Alpha);
+        // Read everything up front and write it back in one SetPixels call. Writing row by row is NOT safe
+        // here: a Clone() shares its pixel cache with the original, and ImageMagick's first queued write
+        // detaches the clone onto a fresh cache WITHOUT copying the existing pixels, so every row read after
+        // that returns uninitialized memory. A single full-image write supplies every pixel, so it is correct
+        // whether or not the cache was shared.
+        ushort[] data = pixels.ToArray();
+        for (int o = 0; o < data.Length; o += stride)
         {
-            for (int y = 0; y < accessor.Height; y++)
+            if (ai >= 0 && data[o + ai] == 0)
             {
-                Span<Rgba32> row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    Rgba32 px = row[x];
-                    if (px.A == 0)
-                    {
-                        continue;
-                    }
-                    (double l, double a, double b) = RgbToLab(px.R, px.G, px.B);
-                    a = Math.Clamp(kA * a + cA, -128.0, 127.0);
-                    b = Math.Clamp(kB * b + cB, -128.0, 127.0);
-                    LabToRgb(l, a, b, out px.R, out px.G, out px.B);
-                    row[x] = px;
-                }
+                continue;
             }
-        });
+            (double l, double a, double b) = RgbToLab(QuantumToByte(data[o + ri]), QuantumToByte(data[o + gi]), QuantumToByte(data[o + bi]));
+            a = Math.Clamp(kA * a + cA, -128.0, 127.0);
+            b = Math.Clamp(kB * b + cB, -128.0, 127.0);
+            LabToRgb(l, a, b, out byte r, out byte g, out byte bl);
+            data[o + ri] = ByteToQuantum(r);
+            data[o + gi] = ByteToQuantum(g);
+            data[o + bi] = ByteToQuantum(bl);
+        }
+        pixels.SetPixels(data);
         return true;
     }
 }
