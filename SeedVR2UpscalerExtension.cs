@@ -9,14 +9,8 @@ using SwarmUI.Builtin_ComfyUIBackend;
 using SwarmUI.Core;
 using SwarmUI.Media;
 using SwarmUI.Text2Image;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Metadata.Profiles.Exif;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Formats.Tiff;
-using SixLabors.ImageSharp.PixelFormats;
+using ImageMagick;
 using SwarmUI.Utils;
-using ISImage = SixLabors.ImageSharp.Image;
-using ISImage32 = SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>;
 using Image = SwarmUI.Utils.Image;
 
 namespace SeedVR2Upscaler;
@@ -1321,49 +1315,33 @@ public class SeedVR2UpscalerExtension : Extension
         // 8. Extract source EXIF before replacing data URL (for EXIF preservation)
         // Store in static dictionary (not ExtraMeta) to avoid serialization into image metadata
         long requestId = g.UserInput.UserRequestId;
-        if (isDataUrl && sourceImage is not null)
+        if (sourceImage is not null)
         {
+            // Both branches above leave sourceImage loaded (file sources are read into memory for base64 embedding),
+            // so read EXIF from its already-decoded frame rather than re-reading the file.
+            string exifSourceDesc = isDataUrl ? "data URL" : $"file {imageFile}";
             try
             {
-                ExifProfile sourceExif = sourceImage.ToIS.Metadata.ExifProfile;
-                if (sourceExif is not null && sourceExif.Values.Any())
+                IExifProfile sourceExif = sourceImage.ToMagick.GetExifProfile();
+                if (sourceExif is not null && sourceExif.Values.Count > 0)
                 {
                     PendingSourceExif[requestId] = sourceExif.ToByteArray();
-                    Logs.Info($"SeedVR2 EXIF: Captured {sourceExif.Values.Count()} tags from data URL (request {requestId})");
+                    Logs.Info($"SeedVR2 EXIF: Captured {sourceExif.Values.Count} tags from {exifSourceDesc} (request {requestId})");
                 }
                 else
                 {
-                    Logs.Info($"SeedVR2 EXIF: No EXIF data found in data URL source image");
+                    Logs.Info($"SeedVR2 EXIF: No EXIF data found in source {exifSourceDesc}");
                 }
             }
             catch (Exception ex)
             {
-                Logs.Debug($"SeedVR2: Could not extract EXIF from data URL: {ex.Message}");
+                Logs.Debug($"SeedVR2: Could not extract EXIF from {exifSourceDesc}: {ex.Message}");
             }
+        }
+        if (isDataUrl)
+        {
             // Clear data URL from metadata (data URLs are huge and shouldn't be stored)
             g.UserInput.Set(SeedVR2ImageFile, "[data URL image]");
-        }
-        else if (!isDataUrl)
-        {
-            // Extract EXIF from file path
-            try
-            {
-                using ISImage sourceImg = ISImage.Load(imageFile);
-                ExifProfile sourceExif = sourceImg.Metadata.ExifProfile;
-                if (sourceExif is not null && sourceExif.Values.Any())
-                {
-                    PendingSourceExif[requestId] = sourceExif.ToByteArray();
-                    Logs.Info($"SeedVR2 EXIF: Captured {sourceExif.Values.Count()} tags from file (request {requestId})");
-                }
-                else
-                {
-                    Logs.Info($"SeedVR2 EXIF: No EXIF data found in source file {imageFile}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logs.Debug($"SeedVR2: Could not extract EXIF from file: {ex.Message}");
-            }
         }
 
         // 8b. Stash the source image's global CIELAB statistics so the tiled upscaler's output can be
@@ -1382,7 +1360,7 @@ public class SeedVR2UpscalerExtension : Extension
                 try
                 {
                     PruneStalePendingColorMatch();
-                    SeedVR2ColorMatch.LabStats stats = SeedVR2ColorMatch.ComputeLabStats(sourceImage.ToIS);
+                    SeedVR2ColorMatch.LabStats stats = SeedVR2ColorMatch.ComputeLabStats(sourceImage.ToMagick);
                     PendingColorMatch[colorKey] = (stats, Environment.TickCount64 + PendingColorMatchTimeoutMs);
                     Logs.Info($"SeedVR2 ColorMatch: Captured source stats for {colorKey} (a={stats.AMean:0.##}±{stats.AStd:0.##}, b={stats.BMean:0.##}±{stats.BStd:0.##})");
                 }
@@ -1978,83 +1956,6 @@ public class SeedVR2UpscalerExtension : Extension
         Logs.Info($"SeedVR2 Video: Video upscaling workflow complete");
     }
 
-    /// <summary>Resolves an image path to an absolute file system path.</summary>
-    /// <param name="imagePath">The image path (may be Output/, View/, or absolute).</param>
-    /// <param name="user">The user for resolving output directories.</param>
-    /// <returns>The resolved absolute file path, or null if it cannot be resolved.</returns>
-    private static string ResolveImagePath(string imagePath, User user)
-    {
-        if (string.IsNullOrEmpty(imagePath))
-        {
-            return null;
-        }
-
-        // Expand home directory
-        if (imagePath.StartsWith("~/"))
-        {
-            imagePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + imagePath[1..];
-        }
-
-        // Resolve Output/ or View/ paths using user's output directory
-        if (user is not null)
-        {
-            string relativePath = null;
-            if (imagePath.StartsWith("Output/"))
-            {
-                relativePath = imagePath["Output/".Length..];
-            }
-            else if (imagePath.StartsWith("View/"))
-            {
-                // View/{user_id}/path format - strip View/{user_id}/ prefix
-                string afterView = imagePath["View/".Length..];
-                int slashIndex = afterView.IndexOf('/');
-                if (slashIndex > 0)
-                {
-                    relativePath = afterView[(slashIndex + 1)..];
-                }
-            }
-
-            if (relativePath is not null)
-            {
-                string root = Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, user.OutputDirectory);
-                return UserImageHistoryHelper.GetRealPathFor(user, $"{root}/{relativePath}", root: root);
-            }
-        }
-
-        return imagePath;
-    }
-
-    /// <summary>Extracts ExifProfile from source image (file path or data URL).</summary>
-    /// <param name="sourceImagePath">The source image path or data URL.</param>
-    /// <param name="user">The user for resolving paths.</param>
-    /// <returns>A cloned ExifProfile from the source, or null if extraction fails.</returns>
-    private static ExifProfile ExtractSourceExif(string sourceImagePath, User user)
-    {
-        try
-        {
-            if (sourceImagePath.StartsWith("data:"))
-            {
-                ImageFile img = ImageFile.FromDataString(sourceImagePath);
-                return img.ToIS.Metadata.ExifProfile?.DeepClone();
-            }
-
-            // Resolve Output/View paths
-            string resolvedPath = ResolveImagePath(sourceImagePath, user);
-            if (string.IsNullOrEmpty(resolvedPath) || !System.IO.File.Exists(resolvedPath))
-            {
-                return null;
-            }
-
-            using ISImage image = ISImage.Load(resolvedPath);
-            return image.Metadata.ExifProfile?.DeepClone();
-        }
-        catch (Exception ex)
-        {
-            Logs.Debug($"SeedVR2: Could not extract source EXIF: {ex.Message}");
-            return null;
-        }
-    }
-
     /// <summary>Set of SeedVR2 parameter IDs that should be preserved from the current request, not overwritten by source metadata.</summary>
     /// <remarks>IDs are cleaned by T2IParamTypes.CleanTypeName which keeps only lowercase letters.</remarks>
     private static readonly HashSet<string> SeedVR2ParamIds =
@@ -2197,40 +2098,49 @@ public class SeedVR2UpscalerExtension : Extension
         {
             return;
         }
+        IMagickImage<ushort> working = null;
         try
         {
             long start = Environment.TickCount64;
-            ISImage decoded = image.ToIS;
-            ISImage32 working = decoded as ISImage32;
-            bool cloned = working is null;
-            if (cloned)
+            if (image.ToMagickFrames.Count != 1)
             {
-                working = decoded.CloneAs<Rgba32>();
+                Logs.Debug($"SeedVR2 ColorMatch: Output for {colorKey} is animated, skipping global color harmonization.");
+                return;
             }
+            // ToMagick is the file's shared cached frame and must not be edited in place.
+            working = image.ToMagick.Clone();
+            SeedVR2ColorMatch.ConvertToSrgb(working);
             SeedVR2ColorMatch.LabStats outputStats = SeedVR2ColorMatch.ComputeLabStats(working);
             if (!SeedVR2ColorMatch.ApplyChromaTransfer(working, outputStats, pending.Stats))
             {
-                if (cloned)
-                {
-                    working.Dispose();
-                }
                 Logs.Debug($"SeedVR2 ColorMatch: Output already matches source color statistics for {colorKey}, left unmodified.");
                 return;
             }
-            if (cloned)
+            uint width = working.Width, height = working.Height;
+            byte[] png = ImageFile.MagickImageToPngBytes(working);
+            MagickImageCollection corrected = [];
+            corrected.Add(working);
+            working = null; // Now owned by the collection.
+            // ConvertTo (called from Session.ApplyMetadata right after this handler returns) reads the cached
+            // ToMagickFrames, not RawData - the cache must be replaced or the correction is silently lost.
+            MagickImageCollection old;
+            lock (image)
             {
-                // ConvertTo (called from Session.ApplyMetadata right after this handler returns) reads the
-                // cached ToIS, not RawData - the cache must be kept in sync or the correction is silently lost.
-                image._CacheISImg = working;
-                decoded.Dispose();
+                old = image._CacheMagick;
+                image._CacheMagick = corrected;
+                image.RawData = png;
+                image.Type = MediaType.ImagePng;
             }
-            image.RawData = ImageFile.ISImgToPngBytes(working);
-            image.Type = MediaType.ImagePng;
-            Logs.Info($"SeedVR2 ColorMatch: Harmonized {working.Width}x{working.Height} output for {colorKey} in {Environment.TickCount64 - start}ms");
+            old?.Dispose();
+            Logs.Info($"SeedVR2 ColorMatch: Harmonized {width}x{height} output for {colorKey} in {Environment.TickCount64 - start}ms");
         }
         catch (Exception ex)
         {
             Logs.Warning($"SeedVR2 ColorMatch: Failed to apply global color harmonization: {ex.Message}");
+        }
+        finally
+        {
+            working?.Dispose();
         }
     }
 
@@ -2257,12 +2167,12 @@ public class SeedVR2UpscalerExtension : Extension
 
         Logs.Info($"SeedVR2 EXIF: Processing request {requestId} with {exifBytes.Length} bytes of EXIF data");
 
-        // Reconstruct ExifProfile from bytes
-        ExifProfile sourceExif;
+        // Validate the stored profile once up front; each output file then parses its own copy, since the
+        // per-file continuations below may run concurrently.
         try
         {
-            sourceExif = new ExifProfile(exifBytes);
-            Logs.Info($"SeedVR2 EXIF: Reconstructed profile with {sourceExif.Values.Count()} tags");
+            ExifProfile sourceExif = new(exifBytes);
+            Logs.Info($"SeedVR2 EXIF: Reconstructed profile with {sourceExif.Values.Count} tags");
         }
         catch (Exception ex)
         {
@@ -2311,7 +2221,7 @@ public class SeedVR2UpscalerExtension : Extension
                 {
                     // Small delay to ensure file is fully written
                     Task.Delay(100).Wait();
-                    ApplySourceExifToFile(filePath, sourceExif);
+                    ApplySourceExifToFile(filePath, exifBytes);
                 });
             }
         }
@@ -2319,8 +2229,8 @@ public class SeedVR2UpscalerExtension : Extension
 
     /// <summary>Applies source EXIF metadata to a saved image file, preserving SwarmUI's UserComment.</summary>
     /// <param name="filePath">The path to the saved image file.</param>
-    /// <param name="sourceExif">The source EXIF profile to apply.</param>
-    private static void ApplySourceExifToFile(string filePath, ExifProfile sourceExif)
+    /// <param name="sourceExifBytes">The serialized source EXIF profile to apply.</param>
+    private static void ApplySourceExifToFile(string filePath, byte[] sourceExifBytes)
     {
         try
         {
@@ -2340,39 +2250,28 @@ public class SeedVR2UpscalerExtension : Extension
 
             // Load image, modify EXIF, save back
             byte[] imageBytes = System.IO.File.ReadAllBytes(filePath);
-            using ISImage image = ISImage.Load(imageBytes);
+            using MagickImage image = new(imageBytes);
 
-            // Preserve SwarmUI's UserComment (contains generation metadata)
-            string userComment = null;
-            if (image.Metadata.ExifProfile?.TryGetValue(ExifTag.UserComment, out var uc) ?? false)
-            {
-                userComment = uc.Value.Text;
-            }
+            // Preserve SwarmUI's UserComment (contains generation metadata). Copied as raw bytes so its
+            // character-code header and byte order survive unchanged.
+            byte[] userComment = image.GetExifProfile()?.GetValue(ExifTag.UserComment)?.Value;
 
-            // Clone source EXIF and apply
-            ExifProfile merged = sourceExif.DeepClone();
+            ExifProfile merged = new(sourceExifBytes);
+            int cameraTagCount = merged.Values.Count;
 
             // Restore UserComment with SwarmUI metadata
-            if (!string.IsNullOrEmpty(userComment))
+            if (userComment is not null && userComment.Length > 0)
             {
                 merged.SetValue(ExifTag.UserComment, userComment);
             }
 
-            // Apply merged EXIF
-            image.Metadata.ExifProfile = merged;
+            image.SetProfile(merged);
 
-            // Save with appropriate encoder based on extension
-            using var outputStream = new System.IO.FileStream(filePath, System.IO.FileMode.Create);
-            if (ext == ".jpg" || ext == ".jpeg")
-            {
-                image.SaveAsJpeg(outputStream);
-            }
-            else if (ext == ".tif" || ext == ".tiff")
-            {
-                image.SaveAsTiff(outputStream);
-            }
+            // Re-encodes in the format it was read as. For JPEG, Magick carries over the quality it
+            // estimated from the file, so the re-save roughly matches the original compression level.
+            image.Write(filePath);
 
-            Logs.Info($"SeedVR2 EXIF: Applied {sourceExif.Values.Count()} camera EXIF tags to {System.IO.Path.GetFileName(filePath)}");
+            Logs.Info($"SeedVR2 EXIF: Applied {cameraTagCount} camera EXIF tags to {System.IO.Path.GetFileName(filePath)}");
         }
         catch (Exception ex)
         {
